@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published to the host - only reachable from other containers on
+    # this compose network.
+
+  backend:
+    image: ghcr.io/${GHCR_OWNER}/it-ticketing-backend:${TAG:-uat-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SECRET_KEY: ${SECRET_KEY}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+    ports:
+      - "8005:8005"
+    volumes:
+      # Employee seed CSV (real staff PII) never ships in the image or
+      # touches git - copy it onto the box once, seed_users.py reads it
+      # from here. See .env.uat.example for SEED_DATA_DIR.
+      - ${SEED_DATA_DIR:-/opt/it-ticketing/data}:/app/data:ro
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER}/it-ticketing-frontend:${TAG:-uat-latest}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3005:3005"
+
+volumes:
+  postgres_data:

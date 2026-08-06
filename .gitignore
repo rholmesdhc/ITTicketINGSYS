@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.db
+*.sqlite
+
+# env files (secrets) - never commit
+.env
+.env.*
+!.env.*.example
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# misc
+*.log
+.DS_Store
+
+# Contains real employee PII / password hashes from local seeding runs -
+# must never be committed.
+backend/seed_log.txt
+backend/data/*.csv
