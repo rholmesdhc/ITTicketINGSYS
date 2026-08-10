@@ -18,6 +18,8 @@ def migrate():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR;",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR;",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS clinic_site_id INTEGER;",
+            "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS affected_user_id INTEGER;",
+            "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS clinic_site_id INTEGER;",
         ]
         
         for stmt in alter_statements:
@@ -40,6 +42,30 @@ def migrate():
             db.commit()
             print("Successfully added foreign key constraint for clinic_site_id.")
             
+        # Add foreign key constraint for tickets.affected_user_id
+        fk_check_stmt = """
+        SELECT constraint_name
+        FROM information_schema.table_constraints
+        WHERE table_name='tickets' AND constraint_type='FOREIGN KEY' AND constraint_name='fk_tickets_affected_user_id';
+        """
+        result = db.execute(text(fk_check_stmt)).fetchone()
+        if not result:
+            db.execute(text("ALTER TABLE tickets ADD CONSTRAINT fk_tickets_affected_user_id FOREIGN KEY (affected_user_id) REFERENCES users (id);"))
+            db.commit()
+            print("Successfully added foreign key constraint for tickets.affected_user_id.")
+
+        # Add foreign key constraint for tickets.clinic_site_id
+        fk_check_stmt = """
+        SELECT constraint_name
+        FROM information_schema.table_constraints
+        WHERE table_name='tickets' AND constraint_type='FOREIGN KEY' AND constraint_name='fk_tickets_clinic_site_id';
+        """
+        result = db.execute(text(fk_check_stmt)).fetchone()
+        if not result:
+            db.execute(text("ALTER TABLE tickets ADD CONSTRAINT fk_tickets_clinic_site_id FOREIGN KEY (clinic_site_id) REFERENCES clinic_sites (id);"))
+            db.commit()
+            print("Successfully added foreign key constraint for tickets.clinic_site_id.")
+
         # Add unique constraint for email
         unique_check_stmt = """
         SELECT constraint_name 
@@ -51,6 +77,16 @@ def migrate():
             db.execute(text("ALTER TABLE users ADD CONSTRAINT uq_users_email UNIQUE (email);"))
             db.commit()
             print("Successfully added unique constraint for email.")
+
+        # Normalize legacy category values. Tickets created via the MCP
+        # server before its category list matched the web form's landed as
+        # lowercase 'software' - fold them into the canonical 'Software'
+        # so the Tickets-by-Category chart stops showing it as a separate
+        # bucket from everything created through the web UI.
+        result = db.execute(text("UPDATE tickets SET category = 'Software' WHERE category = 'software';"))
+        db.commit()
+        if result.rowcount:
+            print(f"Normalized {result.rowcount} ticket(s) from category 'software' to 'Software'.")
 
     except Exception as e:
         print(f"Error during migration: {e}")

@@ -1,15 +1,81 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized } from "@/lib/api";
+import { isOverdue, isDueWithin, formatRelativeSla, urgencyRank, PRIORITY_RANK } from "@/lib/ticketSla";
+
+type Employee = { id: number; email: string | null; first_name: string | null; last_name: string | null; role: string };
+
+type QuickTab = "all" | "mine" | "unassigned" | "overdue" | "due_today";
+type SortField = "priority" | "sla" | "category" | "status" | null;
+
+// Item 20: shape-matched placeholders for the first load, instead of a
+// blank flash while KPI cards/charts/table wait on the initial fetch.
+function DashboardSkeleton() {
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 animate-pulse">
+            <div className="h-3 bg-slate-200 rounded w-24 mb-3" />
+            <div className="h-8 bg-slate-200 rounded w-16" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        {[0, 1, 2].map(i => (
+          <div key={i} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 animate-pulse">
+            <div className="h-5 bg-slate-200 rounded w-32 mb-4" />
+            <div className="h-64 bg-slate-100 rounded" />
+          </div>
+        ))}
+      </div>
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="h-12 bg-slate-100 border-b border-slate-200" />
+        {[0, 1, 2, 3, 4].map(i => (
+          <div key={i} className="p-4 border-b border-slate-100 animate-pulse flex gap-4 items-center">
+            <div className="h-4 bg-slate-200 rounded flex-1" />
+            <div className="h-4 bg-slate-200 rounded w-28" />
+            <div className="h-4 bg-slate-200 rounded w-20" />
+            <div className="h-4 bg-slate-200 rounded w-16" />
+            <div className="h-4 bg-slate-200 rounded w-24" />
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
 
 export default function Dashboard() {
   const router = useRouter();
-  const [tickets, setTickets] = useState([]);
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [directory, setDirectory] = useState<Employee[]>([]);
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+
+  // Triage & visibility / search & filtering state
+  const [activeTab, setActiveTab] = useState<QuickTab>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [technicianFilter, setTechnicianFilter] = useState(""); // "" = all, "unassigned", or a tech_id string
+  const [sortField, setSortField] = useState<SortField>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [resolvedExpanded, setResolvedExpanded] = useState(false);
+
+  // Bulk / fast actions state
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkStatusValue, setBulkStatusValue] = useState("");
+  const [bulkTechValue, setBulkTechValue] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // Live data state (items 19-20)
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -20,78 +86,236 @@ export default function Dashboard() {
     setRole(localStorage.getItem("role"));
     setUserId(localStorage.getItem("userId"));
     fetchTickets(token);
+
+    fetch(`${API_BASE_URL}/users/directory`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    })
+      .then(res => {
+        if (isUnauthorized(res)) return [];
+        return res.ok ? res.json() : [];
+      })
+      .then(setDirectory)
+      .catch(() => setDirectory([]));
   }, [router]);
 
-  const fetchTickets = async (token: string) => {
+  // Item 19: poll for new/changed tickets every 30s so anything created
+  // elsewhere (another tech, the MCP server) shows up without a manual
+  // reload. Paused while the tab isn't visible so it's not burning
+  // requests on a background tab nobody's looking at.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      const token = localStorage.getItem("token");
+      if (token) fetchTickets(token);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchTickets = async (token: string, opts?: { showSpinner?: boolean }) => {
+    if (opts?.showSpinner) setIsRefreshing(true);
     try {
       const res = await fetch(`${API_BASE_URL}/tickets/`, {
         headers: {
           "Authorization": `Bearer ${token}`
         }
       });
+      if (isUnauthorized(res)) return;
       if (res.ok) {
         const data = await res.json();
         setTickets(data);
+        setLastUpdated(new Date());
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsInitialLoading(false);
+      if (opts?.showSpinner) setIsRefreshing(false);
+    }
+  };
+
+  const handleManualRefresh = () => {
+    const token = localStorage.getItem("token");
+    if (token) fetchTickets(token, { showSpinner: true });
+  };
+
+  // Shared single-ticket PATCH used by row actions, inline reassignment,
+  // bulk actions, and keyboard shortcuts alike. Returns whether it succeeded.
+  const patchTicket = async (ticketId: number, body: Record<string, unknown>): Promise<boolean> => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(body)
+      });
+      if (isUnauthorized(res)) return false;
+      return res.ok;
+    } catch (e) {
+      console.error("Failed to update ticket", ticketId, e);
+      return false;
     }
   };
 
   const handleStatusChange = async (ticketId: number, newStatus: string) => {
     const token = localStorage.getItem("token");
-    try {
-      const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ status: newStatus })
-      });
-      if (res.ok) {
-        fetchTickets(token as string);
-      }
-    } catch (e) {
-      console.error("Failed to update status", e);
-    }
+    if (await patchTicket(ticketId, { status: newStatus })) fetchTickets(token as string);
   };
 
   const handleAssignToMe = async (ticketId: number) => {
     const token = localStorage.getItem("token");
-    const currentUserId = localStorage.getItem("userId");
-    try {
-      const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ tech_id: parseInt(currentUserId as string) })
-      });
-      if (res.ok) {
-        fetchTickets(token as string);
-      }
-    } catch (e) {
-      console.error("Failed to assign ticket", e);
-    }
+    const currentUserId = parseInt(localStorage.getItem("userId") || "0");
+    if (await patchTicket(ticketId, { tech_id: currentUserId })) fetchTickets(token as string);
+  };
+
+  // Inline per-row reassignment (item 11) - any technician, or null to unassign.
+  const handleReassign = async (ticketId: number, techId: number | null) => {
+    const token = localStorage.getItem("token");
+    if (await patchTicket(ticketId, { tech_id: techId })) fetchTickets(token as string);
+  };
+
+  // --- Bulk selection (item 10) ---
+  const toggleSelectOne = (ticketId: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(ticketId)) next.delete(ticketId); else next.add(ticketId);
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setBulkStatusValue("");
+    setBulkTechValue("");
+  };
+
+  const applyBulkStatus = async (status: string) => {
+    if (!status || selectedIds.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    const token = localStorage.getItem("token");
+    await Promise.all(Array.from(selectedIds).map(id => patchTicket(id, { status })));
+    if (token) fetchTickets(token);
+    clearSelection();
+    setBulkBusy(false);
+  };
+
+  const applyBulkAssign = async (techValue: string) => {
+    if (!techValue || selectedIds.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    const tech_id = techValue === "unassigned" ? null : parseInt(techValue);
+    const token = localStorage.getItem("token");
+    await Promise.all(Array.from(selectedIds).map(id => patchTicket(id, { tech_id })));
+    if (token) fetchTickets(token);
+    clearSelection();
+    setBulkBusy(false);
   };
 
   const isAdminOrTech = role === "admin" || role === "technician";
   const dashboardTitle = isAdminOrTech ? "All Support Tickets" : "My Tickets";
 
-  // KPI Calculations
+  const directoryMap = useMemo(() => {
+    const map = new Map<number, Employee>();
+    directory.forEach(e => map.set(e.id, e));
+    return map;
+  }, [directory]);
+
+  const formatEmployee = (empId: number | null | undefined) => {
+    if (empId == null) return null;
+    const e = directoryMap.get(empId);
+    if (!e) return null;
+    const name = [e.first_name, e.last_name].filter(Boolean).join(" ");
+    return { name: name || null, email: e.email };
+  };
+
+  // Technicians that actually appear assigned to at least one ticket, for
+  // a relevant (not "every employee in the org") filter dropdown.
+  const technicianOptions = useMemo(() => {
+    const ids = new Set<number>();
+    tickets.forEach(t => { if (t.tech_id) ids.add(t.tech_id); });
+    return Array.from(ids).map(id => {
+      const emp = formatEmployee(id);
+      return { id, label: emp?.name || emp?.email || `Tech ${id}` };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+  }, [tickets, directoryMap]);
+
+  // Every technician/admin in the org (item 11) - unlike technicianOptions
+  // above, this includes staff with zero tickets currently assigned, so a
+  // manager can hand work to anyone, not just people already carrying load.
+  const allTechnicians = useMemo(() => {
+    return directory
+      .filter(e => e.role === "technician" || e.role === "admin")
+      .map(e => ({ id: e.id, label: [e.first_name, e.last_name].filter(Boolean).join(" ") || e.email || `User ${e.id}` }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [directory]);
+
+  const categoryOptions = useMemo(() => {
+    return Array.from(new Set(tickets.map(t => t.category))).sort();
+  }, [tickets]);
+
+  // Item 14: active (non-resolved) ticket count per technician, including
+  // techs with zero so a manager can see who has room, not just who's busy.
+  const OVERLOAD_THRESHOLD = 5;
+  const workload = useMemo(() => {
+    const counts = new Map<number, number>();
+    tickets.forEach(t => {
+      if (t.status !== "resolved" && t.tech_id) {
+        counts.set(t.tech_id, (counts.get(t.tech_id) || 0) + 1);
+      }
+    });
+    return allTechnicians
+      .map(tech => ({ ...tech, count: counts.get(tech.id) || 0 }))
+      .sort((a, b) => b.count - a.count);
+  }, [tickets, allTechnicians]);
+
+  // --- KPI Calculations (unaffected by table filters - overall snapshot) ---
   const totalTickets = tickets.length;
   const openTickets = tickets.filter((t: any) => t.status === "open").length;
   const highPriorityTickets = tickets.filter((t: any) => t.priority === "P1" || t.priority === "P2").length;
   const resolvedTickets = tickets.filter((t: any) => t.status === "resolved").length;
 
-  // Chart Data Calculations
+  // --- Trend deltas (item 13): "this week" vs "the week before" counted by
+  // when each ticket hit the date field that matters for that card. There's
+  // no history table, so this measures activity volume (creations/updates
+  // in each 7-day window), not a literal "open count as of 7 days ago" -
+  // the closest honest signal available from the fields the API returns.
+  const weekOverWeek = (subset: any[], dateField: "created_at" | "updated_at") => {
+    const now = Date.now();
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+    let thisWeek = 0, lastWeek = 0;
+    subset.forEach((t) => {
+      const d = new Date(t[dateField]).getTime();
+      if (d > now - oneWeekMs) thisWeek++;
+      else if (d > now - 2 * oneWeekMs) lastWeek++;
+    });
+    return thisWeek - lastWeek;
+  };
+
+  const totalTrend = weekOverWeek(tickets, "created_at");
+  const openTrend = weekOverWeek(tickets.filter((t: any) => t.status === "open"), "created_at");
+  const highPriorityTrend = weekOverWeek(tickets.filter((t: any) => t.priority === "P1" || t.priority === "P2"), "created_at");
+  const resolvedTrend = weekOverWeek(tickets.filter((t: any) => t.status === "resolved"), "updated_at");
+
+  // goodDirection: which sign of the delta should read as "good" (green).
+  const renderTrend = (delta: number, goodDirection: "up" | "down" | "neutral") => {
+    if (delta === 0) return <span className="text-xs text-slate-400 mt-1 block">No change vs last week</span>;
+    const isUp = delta > 0;
+    const isGood = goodDirection === "neutral" ? null : (goodDirection === "up") === isUp;
+    const color = isGood === null ? "text-slate-500" : isGood ? "text-emerald-600" : "text-red-600";
+    return (
+      <span className={`text-xs font-semibold mt-1 block ${color}`}>
+        {isUp ? "▲" : "▼"} {Math.abs(delta)} vs last week
+      </span>
+    );
+  };
+
+  // --- Chart Data Calculations (also unaffected by table filters) ---
   const statusCounts = tickets.reduce((acc: any, ticket: any) => {
     acc[ticket.status] = (acc[ticket.status] || 0) + 1;
     return acc;
   }, {});
-  
+
   const statusData = [
     { name: 'Open', value: statusCounts['open'] || 0, color: '#f59e0b' },
     { name: 'In Progress', value: statusCounts['in_progress'] || 0, color: '#3b82f6' },
@@ -119,6 +343,311 @@ export default function Dashboard() {
     count: techCounts[key]
   }));
 
+  // --- Table pipeline: quick tab -> search -> column filters -> sort ---
+  const currentUserIdNum = parseInt(userId || "0");
+
+  const tabFiltered = useMemo(() => {
+    switch (activeTab) {
+      case "mine":
+        return tickets.filter(t => t.tech_id === currentUserIdNum);
+      case "unassigned":
+        return tickets.filter(t => !t.tech_id);
+      case "overdue":
+        return tickets.filter(t => isOverdue(t));
+      case "due_today":
+        return tickets.filter(t => isDueWithin(t, 24));
+      default:
+        return tickets;
+    }
+  }, [tickets, activeTab, currentUserIdNum]);
+
+  const searched = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return tabFiltered;
+    return tabFiltered.filter(t => {
+      const requester = formatEmployee(t.requester_id);
+      const affected = formatEmployee(t.affected_user_id);
+      const haystack = [
+        `#${t.id}`,
+        t.title,
+        t.description,
+        requester?.name,
+        requester?.email,
+        affected?.name,
+        affected?.email,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [tabFiltered, searchQuery, directoryMap]);
+
+  const columnFiltered = useMemo(() => {
+    return searched.filter(t => {
+      if (statusFilter && t.status !== statusFilter) return false;
+      if (priorityFilter && t.priority !== priorityFilter) return false;
+      if (categoryFilter && t.category !== categoryFilter) return false;
+      if (technicianFilter === "unassigned" && t.tech_id) return false;
+      if (technicianFilter && technicianFilter !== "unassigned" && String(t.tech_id) !== technicianFilter) return false;
+      return true;
+    });
+  }, [searched, statusFilter, priorityFilter, categoryFilter, technicianFilter]);
+
+  const compareByField = (a: any, b: any, field: SortField): number => {
+    switch (field) {
+      case "priority":
+        return (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
+      case "sla": {
+        const ams = a.sla_deadline ? new Date(a.sla_deadline).getTime() : Infinity;
+        const bms = b.sla_deadline ? new Date(b.sla_deadline).getTime() : Infinity;
+        return ams - bms;
+      }
+      case "category":
+        return String(a.category).localeCompare(String(b.category));
+      case "status":
+        return String(a.status).localeCompare(String(b.status));
+      default:
+        return 0;
+    }
+  };
+
+  const activeList = columnFiltered.filter(t => t.status !== "resolved");
+  const resolvedList = columnFiltered.filter(t => t.status === "resolved");
+
+  const sortedActive = useMemo(() => {
+    const list = [...activeList];
+    if (sortField) {
+      list.sort((a, b) => compareByField(a, b, sortField) * (sortDirection === "asc" ? 1 : -1));
+    } else {
+      list.sort((a, b) => urgencyRank(a) - urgencyRank(b));
+    }
+    return list;
+  }, [activeList, sortField, sortDirection]);
+
+  const sortedResolved = useMemo(() => {
+    const list = [...resolvedList];
+    if (sortField) {
+      list.sort((a, b) => compareByField(a, b, sortField) * (sortDirection === "asc" ? 1 : -1));
+    } else {
+      list.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+    }
+    return list;
+  }, [resolvedList, sortField, sortDirection]);
+
+  const toggleSort = (field: Exclude<SortField, null>) => {
+    if (sortField === field) {
+      setSortDirection(d => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  const sortArrow = (field: Exclude<SortField, null>) => {
+    if (sortField !== field) return null;
+    return <span className="ml-1">{sortDirection === "asc" ? "▲" : "▼"}</span>;
+  };
+
+  // Selection is scoped to whatever's currently visible - clear it whenever
+  // the visible set changes so a user can't apply a bulk action to tickets
+  // they can no longer see (or think they've selected something they haven't).
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [activeTab, searchQuery, statusFilter, priorityFilter, categoryFilter, technicianFilter]);
+
+  const allVisibleSelected = sortedActive.length > 0 && sortedActive.every(t => selectedIds.has(t.id));
+  const toggleSelectAllVisible = () => {
+    setSelectedIds(prev => {
+      if (allVisibleSelected) return new Set();
+      return new Set(sortedActive.map(t => t.id));
+    });
+  };
+
+  // --- Keyboard shortcuts (item 12): act on the current selection ---
+  useEffect(() => {
+    if (!isAdminOrTech) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isTyping = ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+      if (isTyping) return;
+
+      if (e.key === "Escape") {
+        clearSelection();
+        return;
+      }
+      if (selectedIds.size === 0) return;
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        applyBulkStatus("resolved");
+      } else if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        applyBulkAssign(String(currentUserIdNum));
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isAdminOrTech, selectedIds, currentUserIdNum]);
+
+  // Item 16: SLA-breach alert banner
+  const overdueTickets = tickets.filter(t => isOverdue(t));
+
+  // Item 15: export whatever's currently visible (both active + resolved,
+  // respecting the active tab/search/column filters) as CSV.
+  const exportCsv = () => {
+    const rows = [...sortedActive, ...sortedResolved];
+    const header = ["ID", "Title", "Status", "Priority", "Category", "Affected Employee", "Requester", "Technician", "SLA Deadline", "Created At"];
+    const escapeCsv = (val: unknown) => {
+      const s = val == null ? "" : String(val);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = rows.map(t => {
+      const affected = formatEmployee(t.affected_user_id);
+      const requester = formatEmployee(t.requester_id);
+      const tech = formatEmployee(t.tech_id);
+      return [
+        t.id,
+        t.title,
+        t.status,
+        t.priority,
+        t.category,
+        affected?.name || affected?.email || "",
+        requester?.name || requester?.email || "",
+        tech?.name || tech?.email || "",
+        t.sla_deadline ? new Date(t.sla_deadline).toLocaleString() : "",
+        new Date(t.created_at).toLocaleString(),
+      ].map(escapeCsv).join(",");
+    });
+    const csv = [header.join(","), ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tickets-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const hasActiveFilters = activeTab !== "all" || searchQuery || statusFilter || priorityFilter || categoryFilter || technicianFilter || sortField;
+  const resetFilters = () => {
+    setActiveTab("all");
+    setSearchQuery("");
+    setStatusFilter("");
+    setPriorityFilter("");
+    setCategoryFilter("");
+    setTechnicianFilter("");
+    setSortField(null);
+    setSortDirection("asc");
+  };
+
+  const columnCount = 6 + (isAdminOrTech ? 2 : 0); // +1 checkbox, +1 actions
+
+  const renderRow = (t: any, selectable: boolean) => {
+    const overdue = isOverdue(t);
+    const affected = formatEmployee(t.affected_user_id);
+    return (
+      <tr key={t.id} className={`border-b border-slate-100 hover:bg-slate-50 ${overdue ? "bg-red-50" : ""} ${selectedIds.has(t.id) ? "bg-sky-50" : ""}`}>
+        {isAdminOrTech && (
+          <td className="p-4">
+            {selectable && (
+              <input
+                type="checkbox"
+                checked={selectedIds.has(t.id)}
+                onChange={() => toggleSelectOne(t.id)}
+                className="w-4 h-4 cursor-pointer"
+                aria-label={`Select ticket #${t.id}`}
+              />
+            )}
+          </td>
+        )}
+        <td className="p-4 font-medium text-medical-dark">
+          <Link href={`/tickets/${t.id}`} className="hover:underline">
+            #{t.id} - {t.title}
+          </Link>
+        </td>
+        <td className="p-4 text-sm text-slate-600">
+          {affected ? (
+            <>
+              <div>{affected.name || "—"}</div>
+              <div className="text-xs text-slate-400">{affected.email}</div>
+            </>
+          ) : (
+            <span className="text-slate-400">Same as requester</span>
+          )}
+        </td>
+        <td className="p-4">{t.category}</td>
+        <td className="p-4">
+          {isAdminOrTech ? (
+            <select
+              className="bg-sky-50 border border-sky-200 text-sky-800 text-xs font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer"
+              value={t.status}
+              onChange={(e) => handleStatusChange(t.id, e.target.value)}
+            >
+              <option value="open">OPEN</option>
+              <option value="in_progress">IN PROGRESS</option>
+              <option value="resolved">RESOLVED</option>
+            </select>
+          ) : (
+            <span className="bg-sky-100 text-sky-800 px-2 py-1 rounded text-xs font-bold uppercase">{t.status.replace("_", " ")}</span>
+          )}
+        </td>
+        <td className="p-4">
+          <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-slate-100 text-slate-800'}`}>
+            {t.priority}
+          </span>
+        </td>
+        <td className="p-4 text-sm font-medium">
+          <div className={overdue ? "text-red-600 font-bold flex items-center gap-2" : "text-slate-600"}>
+            {formatRelativeSla(t)}
+            {overdue && (
+              <span className="text-[10px] font-bold uppercase bg-red-600 text-white px-1.5 py-0.5 rounded">Overdue</span>
+            )}
+          </div>
+          <div className="text-xs text-slate-400">
+            {t.sla_deadline ? new Date(t.sla_deadline).toLocaleString() : ""}
+          </div>
+        </td>
+        {isAdminOrTech && (
+          <td className="p-4 text-right">
+            <div className="flex flex-col items-end gap-1">
+              <select
+                className="text-xs border border-slate-300 rounded px-2 py-1 bg-white cursor-pointer max-w-[160px]"
+                value={t.tech_id ?? ""}
+                onChange={(e) => handleReassign(t.id, e.target.value ? parseInt(e.target.value) : null)}
+                aria-label={`Reassign ticket #${t.id}`}
+              >
+                <option value="">Unassigned</option>
+                {allTechnicians.map(tech => (
+                  <option key={tech.id} value={tech.id}>
+                    {tech.label}{tech.id === currentUserIdNum ? " (you)" : ""}
+                  </option>
+                ))}
+              </select>
+              {t.tech_id === currentUserIdNum ? (
+                <span className="text-[10px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded border border-green-200">Assigned to you</span>
+              ) : (
+                <button
+                  onClick={() => handleAssignToMe(t.id)}
+                  className="text-[11px] text-medical-blue hover:text-medical-dark hover:underline cursor-pointer font-semibold"
+                >
+                  Assign to me
+                </button>
+              )}
+            </div>
+          </td>
+        )}
+      </tr>
+    );
+  };
+
+  const tabButton = (tab: QuickTab, label: string, count: number) => (
+    <button
+      onClick={() => setActiveTab(tab)}
+      className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+        activeTab === tab ? "bg-medical-blue text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+      }`}
+    >
+      {label} <span className="opacity-70">({count})</span>
+    </button>
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <header className="bg-medical-blue text-white p-4 shadow-md flex justify-between items-center px-10">
@@ -130,41 +659,109 @@ export default function Dashboard() {
             </Link>
           )}
         </div>
-        <button 
+        <button
           onClick={() => { localStorage.removeItem("token"); localStorage.removeItem("role"); localStorage.removeItem("userId"); router.push("/login"); }}
           className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
         >
           Logout
         </button>
       </header>
-      
+
       <main className="max-w-7xl mx-auto p-10 w-full flex-1">
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex justify-between items-center mb-2">
           <h2 className="text-3xl font-semibold text-slate-800">{dashboardTitle}</h2>
-          <Link href="/tickets/new" className="bg-medical-accent hover:bg-medical-blue text-white px-5 py-2 rounded shadow transition-colors font-semibold">
-            + New Ticket
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={exportCsv}
+              className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded shadow-sm transition-colors font-semibold cursor-pointer"
+            >
+              ⬇ Export CSV
+            </button>
+            <Link href="/tickets/new" className="bg-medical-accent hover:bg-medical-blue text-white px-5 py-2 rounded shadow transition-colors font-semibold">
+              + New Ticket
+            </Link>
+          </div>
         </div>
-        
+
+        {/* Item 19: manual refresh + last-updated, so it's clear the list can
+            go stale (e.g. a ticket filed via MCP) and there's a way to fix it
+            without a full page reload. Auto-refreshes every 30s on its own. */}
+        <div className="flex items-center gap-2 mb-8 text-sm text-slate-500">
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 text-medical-blue hover:text-medical-dark font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className={isRefreshing ? "animate-spin" : ""}>↻</span>
+            {isRefreshing ? "Refreshing..." : "Refresh"}
+          </button>
+          {lastUpdated && <span>· Updated {lastUpdated.toLocaleTimeString()}</span>}
+        </div>
+
+        {/* SLA-breach alert banner (item 16) */}
+        {overdueTickets.length > 0 && (
+          <button
+            onClick={() => setActiveTab("overdue")}
+            className="w-full text-left mb-6 bg-red-50 border border-red-300 rounded-xl p-4 flex items-center justify-between gap-3 hover:bg-red-100 transition-colors cursor-pointer"
+          >
+            <span className="font-semibold text-red-800">
+              ⚠ {overdueTickets.length} ticket{overdueTickets.length === 1 ? "" : "s"} {isAdminOrTech ? "" : "of yours "}past SLA deadline
+              {isAdminOrTech ? " across the queue" : ""}
+            </span>
+            <span className="text-sm text-red-700 font-semibold underline">View overdue tickets →</span>
+          </button>
+        )}
+
+        {isInitialLoading ? (
+          <DashboardSkeleton />
+        ) : (
+        <>
         {/* KPI Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <h3 className="text-sm font-semibold text-slate-500 uppercase">Total Tickets</h3>
             <p className="text-3xl font-bold text-slate-800 mt-2">{totalTickets}</p>
+            {renderTrend(totalTrend, "neutral")}
           </div>
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <h3 className="text-sm font-semibold text-slate-500 uppercase">Open Tickets</h3>
             <p className="text-3xl font-bold text-amber-500 mt-2">{openTickets}</p>
+            {renderTrend(openTrend, "down")}
           </div>
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <h3 className="text-sm font-semibold text-slate-500 uppercase">High Priority (P1/P2)</h3>
             <p className="text-3xl font-bold text-red-500 mt-2">{highPriorityTickets}</p>
+            {renderTrend(highPriorityTrend, "down")}
           </div>
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <h3 className="text-sm font-semibold text-slate-500 uppercase">Resolved</h3>
             <p className="text-3xl font-bold text-emerald-500 mt-2">{resolvedTickets}</p>
+            {renderTrend(resolvedTrend, "up")}
           </div>
         </div>
+
+        {/* Technician Workload (item 14) */}
+        {isAdminOrTech && workload.length > 0 && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
+            <h3 className="text-lg font-semibold text-slate-800 mb-4">Technician Workload</h3>
+            <div className="flex flex-wrap gap-4">
+              {workload.map(tech => {
+                const overloaded = tech.count >= OVERLOAD_THRESHOLD;
+                return (
+                  <div
+                    key={tech.id}
+                    className={`flex-1 min-w-[160px] p-4 rounded-lg border ${overloaded ? "bg-red-50 border-red-300" : "bg-slate-50 border-slate-200"}`}
+                  >
+                    <div className="text-sm font-semibold text-slate-700 truncate" title={tech.label}>{tech.label}</div>
+                    <div className={`text-2xl font-bold mt-1 ${overloaded ? "text-red-600" : "text-slate-800"}`}>{tech.count}</div>
+                    <div className="text-xs text-slate-500">active ticket{tech.count === 1 ? "" : "s"}</div>
+                    {overloaded && <div className="text-[10px] font-bold uppercase text-red-600 mt-1">⚠ Overloaded</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Charts Section */}
         {tickets.length > 0 && (
@@ -193,7 +790,7 @@ export default function Dashboard() {
                 </ResponsiveContainer>
               </div>
             </div>
-            
+
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
               <h3 className="text-lg font-semibold text-slate-800 mb-4">Tickets by Category</h3>
               <div className="h-64 w-full">
@@ -226,75 +823,170 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Quick-filter tabs */}
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          {tabButton("all", "All", tickets.length)}
+          {isAdminOrTech && tabButton("mine", "My Tickets", tickets.filter(t => t.tech_id === currentUserIdNum).length)}
+          {isAdminOrTech && tabButton("unassigned", "Unassigned", tickets.filter(t => !t.tech_id).length)}
+          {tabButton("overdue", "Overdue", tickets.filter(t => isOverdue(t)).length)}
+          {tabButton("due_today", "Due Today", tickets.filter(t => isDueWithin(t, 24)).length)}
+        </div>
+
+        {/* Search + column filters */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-wrap items-center gap-3">
+          <input
+            type="text"
+            placeholder="Search title, description, requester, or affected employee..."
+            className="flex-1 min-w-[240px] px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-accent"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          <select className="px-3 py-2 border border-slate-300 rounded-lg text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In Progress</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <select className="px-3 py-2 border border-slate-300 rounded-lg text-sm" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
+            <option value="">All Priorities</option>
+            <option value="P1">P1</option>
+            <option value="P2">P2</option>
+            <option value="P3">P3</option>
+            <option value="P4">P4</option>
+          </select>
+          <select className="px-3 py-2 border border-slate-300 rounded-lg text-sm" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+            <option value="">All Categories</option>
+            {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {isAdminOrTech && (
+            <select className="px-3 py-2 border border-slate-300 rounded-lg text-sm" value={technicianFilter} onChange={(e) => setTechnicianFilter(e.target.value)}>
+              <option value="">All Technicians</option>
+              <option value="unassigned">Unassigned</option>
+              {technicianOptions.map(t => <option key={t.id} value={String(t.id)}>{t.label}</option>)}
+            </select>
+          )}
+          {hasActiveFilters && (
+            <button onClick={resetFilters} className="text-sm text-medical-blue hover:text-medical-dark font-semibold cursor-pointer">
+              Reset filters
+            </button>
+          )}
+        </div>
+
+        {/* Bulk action toolbar (item 10) - appears once at least one ticket is selected */}
+        {isAdminOrTech && selectedIds.size > 0 && (
+          <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 mb-4 flex flex-wrap items-center gap-3">
+            <span className="text-sm font-bold text-sky-900">{selectedIds.size} selected</span>
+
+            <select
+              className="text-sm border border-slate-300 rounded px-2 py-1.5 bg-white"
+              value={bulkStatusValue}
+              onChange={(e) => setBulkStatusValue(e.target.value)}
+            >
+              <option value="">Set status...</option>
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+            </select>
+            <button
+              disabled={!bulkStatusValue || bulkBusy}
+              onClick={() => applyBulkStatus(bulkStatusValue)}
+              className="text-sm bg-medical-blue hover:bg-medical-dark text-white px-3 py-1.5 rounded font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              Apply
+            </button>
+
+            <select
+              className="text-sm border border-slate-300 rounded px-2 py-1.5 bg-white"
+              value={bulkTechValue}
+              onChange={(e) => setBulkTechValue(e.target.value)}
+            >
+              <option value="">Assign to...</option>
+              <option value="unassigned">Unassigned</option>
+              {allTechnicians.map(t => <option key={t.id} value={String(t.id)}>{t.label}</option>)}
+            </select>
+            <button
+              disabled={!bulkTechValue || bulkBusy}
+              onClick={() => applyBulkAssign(bulkTechValue)}
+              className="text-sm bg-medical-blue hover:bg-medical-dark text-white px-3 py-1.5 rounded font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              Apply
+            </button>
+
+            <button onClick={clearSelection} className="text-sm text-slate-500 hover:text-slate-700 cursor-pointer">
+              Clear selection
+            </button>
+
+            <span className="text-xs text-slate-400 ml-auto">
+              Shortcuts: <kbd className="px-1 py-0.5 bg-white border border-slate-300 rounded">R</kbd> resolve selected · <kbd className="px-1 py-0.5 bg-white border border-slate-300 rounded">A</kbd> assign to me · <kbd className="px-1 py-0.5 bg-white border border-slate-300 rounded">Esc</kbd> clear
+            </span>
+          </div>
+        )}
+
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[800px]">
+          <table className="w-full text-left border-collapse min-w-[900px]">
             <thead>
               <tr className="bg-slate-100 text-slate-600 border-b border-slate-200">
+                {isAdminOrTech && (
+                  <th className="p-4 font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      className="w-4 h-4 cursor-pointer"
+                      aria-label="Select all visible tickets"
+                    />
+                  </th>
+                )}
                 <th className="p-4 font-semibold">Ticket</th>
-                <th className="p-4 font-semibold">Category</th>
-                <th className="p-4 font-semibold">Status</th>
-                <th className="p-4 font-semibold">Priority</th>
-                <th className="p-4 font-semibold">Resolution SLA (TTR)</th>
+                <th className="p-4 font-semibold">Affected Employee</th>
+                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("category")}>Category{sortArrow("category")}</th>
+                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("status")}>Status{sortArrow("status")}</th>
+                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("priority")}>Priority{sortArrow("priority")}</th>
+                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("sla")}>Resolution SLA (TTR){sortArrow("sla")}</th>
                 {isAdminOrTech && <th className="p-4 font-semibold text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
-              {tickets.length === 0 ? (
+              {sortedActive.length === 0 ? (
                 <tr>
-                  <td colSpan={isAdminOrTech ? 6 : 5} className="p-10 text-center text-slate-500">No tickets found. Create one to get started!</td>
+                  <td colSpan={columnCount} className="p-10 text-center text-slate-500">
+                    {tickets.length === 0 ? "No tickets found. Create one to get started!" : "No active tickets match the current filters."}
+                  </td>
                 </tr>
               ) : (
-                tickets.map((t: any) => (
-                  <tr key={t.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="p-4 font-medium text-medical-dark">
-                      <Link href={`/tickets/${t.id}`} className="hover:underline">
-                        #{t.id} - {t.title}
-                      </Link>
-                    </td>
-                    <td className="p-4">{t.category}</td>
-                    <td className="p-4">
-                      {isAdminOrTech ? (
-                        <select 
-                          className="bg-sky-50 border border-sky-200 text-sky-800 text-xs font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer"
-                          value={t.status}
-                          onChange={(e) => handleStatusChange(t.id, e.target.value)}
-                        >
-                          <option value="open">OPEN</option>
-                          <option value="in_progress">IN PROGRESS</option>
-                          <option value="resolved">RESOLVED</option>
-                        </select>
-                      ) : (
-                        <span className="bg-sky-100 text-sky-800 px-2 py-1 rounded text-xs font-bold uppercase">{t.status.replace("_", " ")}</span>
-                      )}
-                    </td>
-                    <td className="p-4">
-                      <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-slate-100 text-slate-800'}`}>
-                        {t.priority}
-                      </span>
-                    </td>
-                    <td className="p-4 text-sm text-slate-500 font-medium">
-                      {t.sla_deadline ? new Date(t.sla_deadline).toLocaleString() : "N/A"}
-                    </td>
-                    {isAdminOrTech && (
-                      <td className="p-4 text-right">
-                        {t.tech_id === parseInt(userId || "0") ? (
-                          <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded border border-green-200">Assigned to you</span>
-                        ) : (
-                          <button 
-                            onClick={() => handleAssignToMe(t.id)}
-                            className="text-xs bg-medical-blue hover:bg-medical-dark text-white px-3 py-1 rounded font-semibold transition-colors"
-                          >
-                            Assign to me
-                          </button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))
+                sortedActive.map(t => renderRow(t, true))
               )}
             </tbody>
           </table>
         </div>
+
+        {/* Resolved tickets - collapsed by default so they don't crowd the active work queue */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+          <button
+            onClick={() => setResolvedExpanded(v => !v)}
+            className="w-full flex justify-between items-center p-4 text-left cursor-pointer hover:bg-slate-50"
+          >
+            <span className="font-semibold text-slate-700">Resolved Tickets ({sortedResolved.length})</span>
+            <span className="text-slate-400">{resolvedExpanded ? "▲ Hide" : "▼ Show"}</span>
+          </button>
+          {resolvedExpanded && (
+            <div className="overflow-x-auto border-t border-slate-200">
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <tbody>
+                  {sortedResolved.length === 0 ? (
+                    <tr>
+                      <td colSpan={columnCount} className="p-10 text-center text-slate-500">No resolved tickets match the current filters.</td>
+                    </tr>
+                  ) : (
+                    sortedResolved.map(t => renderRow(t, false))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        </>
+        )}
       </main>
     </div>
   );

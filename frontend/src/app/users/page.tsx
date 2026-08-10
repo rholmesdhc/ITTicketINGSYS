@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized } from "@/lib/api";
 
 export default function UserManagement() {
   const router = useRouter();
@@ -50,6 +50,7 @@ export default function UserManagement() {
           "Authorization": `Bearer ${token}`
         }
       });
+      if (isUnauthorized(res)) return;
       if (res.ok) {
         const data = await res.json();
         setUsers(data);
@@ -64,6 +65,7 @@ export default function UserManagement() {
       const res = await fetch(`${API_BASE_URL}/clinic-sites/`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
+      if (isUnauthorized(res)) return;
       if (res.ok) {
         const data = await res.json();
         setClinicSites(data);
@@ -84,6 +86,7 @@ export default function UserManagement() {
         },
         body: JSON.stringify({ role: newRole })
       });
+      if (isUnauthorized(res)) return;
       if (res.ok) {
         fetchUsers(token as string);
       }
@@ -133,6 +136,7 @@ export default function UserManagement() {
           "Authorization": `Bearer ${token}`
         }
       });
+      if (isUnauthorized(res)) return;
       if (res.ok) {
         fetchUsers(token as string);
       } else {
@@ -179,7 +183,8 @@ export default function UserManagement() {
         },
         body: JSON.stringify(payload)
       });
-      
+
+      if (isUnauthorized(res)) return;
       if (res.ok) {
         closeModal();
         fetchUsers(token as string);
@@ -233,7 +238,7 @@ export default function UserManagement() {
                 <th className="p-4 font-semibold">Username</th>
                 <th className="p-4 font-semibold">Name</th>
                 <th className="p-4 font-semibold">Email</th>
-                <th className="p-4 font-semibold">Clinic Site</th>
+                <th className="p-4 font-semibold">Primary Clinic Site</th>
                 <th className="p-4 font-semibold">Role</th>
                 <th className="p-4 font-semibold">Actions</th>
               </tr>
@@ -246,7 +251,7 @@ export default function UserManagement() {
                     <td className="p-4 font-medium text-slate-800">{u.username}</td>
                     <td className="p-4 text-slate-800">{u.first_name} {u.mi ? u.mi + '.' : ''} {u.last_name}</td>
                     <td className="p-4 text-slate-600">{u.email}</td>
-                    <td className="p-4 text-slate-600">{site ? (site as any).name : 'Unassigned'}</td>
+                    <td className="p-4 text-slate-600">{site ? (site as any).name : <span className="text-slate-400 italic">Mobile / not set</span>}</td>
                     <td className="p-4">
                       <select 
                         className={`border border-slate-300 text-sm font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer ${
@@ -361,18 +366,22 @@ export default function UserManagement() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Clinic Site</label>
-                  <select 
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Primary Clinic Site</label>
+                  <select
                     value={newClinicSiteId}
                     onChange={(e) => setNewClinicSiteId(e.target.value)}
                     className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
-                    required
                   >
-                    <option value="" disabled>Select a site</option>
+                    <option value="">Mobile / no fixed site</option>
                     {clinicSites.map((site: any) => (
                       <option key={site.id} value={site.id}>{site.name}</option>
                     ))}
                   </select>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Most employees are assigned one home site. Leave unset for staff who work
+                    across multiple sites day-to-day - individual tickets can still record which
+                    site the issue actually happened at.
+                  </p>
                 </div>
                 
                 {/* Account Credentials */}

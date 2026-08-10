@@ -88,6 +88,22 @@ def read_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), c
     users = db.query(models.User).offset(skip).limit(limit).all()
     return users
 
+@app.get("/users/directory", response_model=list[schemas.UserDirectoryEntry])
+def read_user_directory(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Open to any authenticated role (unlike /users/) so requesters can
+    # look up an employee by email when filing a ticket. Never returns
+    # phone_number - see UserDirectoryEntry's docstring for what is/isn't
+    # included and why.
+    return db.query(models.User).order_by(models.User.email).all()
+
+@app.get("/categories", response_model=list[str])
+def read_categories():
+    # Single source of truth for valid ticket categories, consumed by both
+    # the web form and (ideally) any other client creating tickets - e.g.
+    # the MCP server - so nobody has to hardcode a second, driftable copy
+    # of this list. See TICKET_CATEGORIES in schemas.py.
+    return schemas.TICKET_CATEGORIES
+
 @app.get("/clinic-sites/", response_model=list[schemas.ClinicSiteResponse])
 def read_clinic_sites(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     sites = db.query(models.ClinicSite).offset(skip).limit(limit).all()
@@ -147,7 +163,9 @@ def create_ticket(ticket: schemas.TicketCreate, db: Session = Depends(get_db), c
         priority=ticket.priority,
         sla_deadline=sla,
         requester_id=current_user.id,
-        asset_id=ticket.asset_id
+        asset_id=ticket.asset_id,
+        affected_user_id=ticket.affected_user_id,
+        clinic_site_id=ticket.clinic_site_id
     )
     db.add(db_ticket)
     db.commit()
@@ -176,11 +194,13 @@ def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, db: Sessi
     if not db_ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
     
-    if ticket_update.status:
-        db_ticket.status = ticket_update.status
-    if ticket_update.tech_id:
-        db_ticket.tech_id = ticket_update.tech_id
-    
+    # exclude_unset (not a plain truthy check) so a client can explicitly
+    # send tech_id: null to unassign a ticket - a bare `if ticket_update.tech_id`
+    # can never be true for None, so unassignment was previously impossible.
+    update_data = ticket_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_ticket, key, value)
+
     db.commit()
     db.refresh(db_ticket)
     return db_ticket

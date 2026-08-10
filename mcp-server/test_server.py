@@ -1,5 +1,5 @@
 import os
-from server import create_ticket, login, get_auth_headers
+from server import create_ticket, lookup_employee_id_by_email, login, get_auth_headers
 
 def run_test():
     print("Testing IT Ticketing System MCP Server Integration")
@@ -27,7 +27,7 @@ def run_test():
         result = create_ticket(
             title="Test Ticket from MCP",
             description="This is a test ticket created by the MCP server test script.",
-            category="software",
+            category="software",  # deliberately lowercase - backend should normalize to 'Software'
             priority="P3"
         )
         print(f"Result: {result}")
@@ -37,6 +37,15 @@ def run_test():
             print("Ticket creation failed.")
     except Exception as e:
         print(f"Ticket creation encountered an error: {e}")
+
+    print("\n3. Testing employee directory lookup (affected_employee_email)...")
+    try:
+        # A known-seeded employee - see backend/seed_users.py
+        result_id = lookup_employee_id_by_email("acrayton@DeltaHealthCenter.org")
+        print(f"Lookup result: {result_id}")
+        print("Lookup successful." if result_id else "Lookup returned no match.")
+    except Exception as e:
+        print(f"Employee lookup encountered an error: {e}")
 
 if __name__ == "__main__":
     run_test()

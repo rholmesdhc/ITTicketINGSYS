@@ -76,7 +76,17 @@ class Ticket(Base):
     requester_id = Column(Integer, ForeignKey("users.id"))
     tech_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     asset_id = Column(Integer, ForeignKey("assets.id"), nullable=True)
+    # The employee the issue is actually affecting, if different from
+    # whoever is filing the ticket (e.g. a tech filing on someone's behalf).
+    affected_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Explicit override for which clinic site this ticket concerns. Not
+    # derived automatically from affected_user/requester's own profile
+    # site because that's frequently wrong or unset for phone-intake
+    # tickets - a tech needs to be able to just set it directly.
+    clinic_site_id = Column(Integer, ForeignKey("clinic_sites.id"), nullable=True)
 
     requester = relationship("User", back_populates="tickets_submitted", foreign_keys=[requester_id])
     technician = relationship("User", back_populates="tickets_assigned", foreign_keys=[tech_id])
+    affected_user = relationship("User", foreign_keys=[affected_user_id])
+    clinic_site = relationship("ClinicSite", foreign_keys=[clinic_site_id])
     asset = relationship("Asset", back_populates="tickets")

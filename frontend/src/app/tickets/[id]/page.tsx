@@ -1,8 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized } from "@/lib/api";
+import EmployeeEmailSelect from "@/components/EmployeeEmailSelect";
+
+type SaveStatus = { state: "idle" | "saving" | "saved" | "error"; message?: string };
 
 export default function TicketDetail() {
   const { id } = useParams();
@@ -10,6 +13,10 @@ export default function TicketDetail() {
   const [ticket, setTicket] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [directory, setDirectory] = useState<any[]>([]);
+  const [clinicSites, setClinicSites] = useState<any[]>([]);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>({ state: "idle" });
+  const saveIdRef = useRef(0);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -27,6 +34,7 @@ export default function TicketDetail() {
             "Authorization": `Bearer ${token}`
           }
         });
+        if (isUnauthorized(res)) return;
         if (res.ok) {
           const data = await res.json();
           const t = data.find((x: any) => x.id === parseInt(id as string));
@@ -37,10 +45,38 @@ export default function TicketDetail() {
       }
     };
     fetchTicket();
+
+    // Fetched only to resolve the affected employee's name/email for display.
+    fetch(`${API_BASE_URL}/users/directory`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    })
+      .then(res => {
+        if (isUnauthorized(res)) return [];
+        return res.ok ? res.json() : [];
+      })
+      .then(setDirectory)
+      .catch(() => setDirectory([]));
+
+    // Public endpoint, no auth needed - used to resolve a clinic site id to
+    // its display name (item 18: surface a real site instead of the
+    // "Unknown site" text some phone-intake tickets have baked into their
+    // title).
+    fetch(`${API_BASE_URL}/clinic-sites/`)
+      .then(res => (res.ok ? res.json() : []))
+      .then(setClinicSites)
+      .catch(() => setClinicSites([]));
   }, [id, router]);
 
-  const handleStatusChange = async (newStatus: string) => {
+  // Every field on this page auto-saves on change - there's no Save button
+  // because there's nothing left un-submitted. This helper is what actually
+  // makes that safe to rely on: it surfaces a "Saving.../Saved/Failed to
+  // save" indicator so a silent failure (expired session, dropped network)
+  // is never mistaken for a successful save. `saveIdRef` guards against a
+  // fast second edit clearing the "Saved" toast for a still-in-flight one.
+  const patchTicket = async (body: Record<string, unknown>, label: string): Promise<boolean> => {
+    const myId = ++saveIdRef.current;
     const token = localStorage.getItem("token");
+    setSaveStatus({ state: "saving", message: `Saving ${label}...` });
     try {
       const res = await fetch(`${API_BASE_URL}/tickets/${ticket.id}`, {
         method: "PATCH",
@@ -48,42 +84,51 @@ export default function TicketDetail() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify(body)
       });
+      if (isUnauthorized(res)) return false;
       if (res.ok) {
         const updated = await res.json();
         setTicket(updated);
+        setSaveStatus({ state: "saved", message: `${label.charAt(0).toUpperCase() + label.slice(1)} saved` });
+        setTimeout(() => {
+          if (saveIdRef.current === myId) setSaveStatus({ state: "idle" });
+        }, 2500);
+        return true;
       }
+      setSaveStatus({ state: "error", message: `Failed to save ${label}` });
+      return false;
     } catch (e) {
-      console.error("Failed to update status", e);
+      console.error(`Failed to update ${label}`, e);
+      setSaveStatus({ state: "error", message: `Failed to save ${label} - check your connection` });
+      return false;
     }
   };
 
-  const handleAssignToMe = async () => {
-    const token = localStorage.getItem("token");
-    try {
-      const res = await fetch(`${API_BASE_URL}/tickets/${ticket.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ tech_id: parseInt(userId as string) })
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setTicket(updated);
-      }
-    } catch (e) {
-      console.error("Failed to assign ticket", e);
-    }
+  const handleStatusChange = (newStatus: string) => patchTicket({ status: newStatus }, "status");
+
+  const handleAffectedUserChange = (affectedUserId: number | null) => {
+    if (affectedUserId == null) return; // ignore in-progress typing, only submit on an actual selection
+    patchTicket({ affected_user_id: affectedUserId }, "affected employee");
   };
+
+  const handleClinicSiteChange = (clinicSiteId: number | null) => patchTicket({ clinic_site_id: clinicSiteId }, "clinic site");
+
+  const handleAssignToMe = () => patchTicket({ tech_id: parseInt(userId as string) }, "assignment");
 
   if (!ticket) {
     return <div className="p-10 text-center font-bold text-slate-500">Loading ticket details...</div>;
   }
 
   const isAdminOrTech = role === "admin" || role === "technician";
+  const affectedEmployee = directory.find((e: any) => e.id === ticket.affected_user_id);
+  const requesterEmployee = directory.find((e: any) => e.id === ticket.requester_id);
+  // A tech's explicit choice (ticket.clinic_site_id) always wins. Otherwise
+  // fall back to the affected employee's own site, then the requester's -
+  // that fallback is a best guess, which is exactly why it needs to stay
+  // directly overridable rather than only ever being inferred.
+  const effectiveClinicSiteId = ticket.clinic_site_id ?? affectedEmployee?.clinic_site_id ?? requesterEmployee?.clinic_site_id ?? null;
+  const clinicSiteName = clinicSites.find((s: any) => s.id === effectiveClinicSiteId)?.name;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -115,6 +160,44 @@ export default function TicketDetail() {
               <div>
                 <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Asset Link</h3>
                 <p className="text-lg font-medium text-slate-800">{ticket.asset_id ? `Asset #${ticket.asset_id}` : "None Selected"}</p>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Clinic Site</h3>
+                {isAdminOrTech ? (
+                  <select
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-lg font-medium text-slate-800 focus:ring-2 focus:ring-medical-accent focus:outline-none cursor-pointer"
+                    value={effectiveClinicSiteId ?? ""}
+                    onChange={(e) => handleClinicSiteChange(e.target.value ? parseInt(e.target.value) : null)}
+                  >
+                    <option value="">Unknown / Not set</option>
+                    {clinicSites.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                ) : (
+                  <p className="text-lg font-medium text-slate-800">{clinicSiteName || "Unknown"}</p>
+                )}
+                {isAdminOrTech && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    {ticket.clinic_site_id != null
+                      ? "Set specifically for this ticket."
+                      : "Defaults to the affected employee's primary site - override here if they're mobile and working elsewhere today."}
+                  </p>
+                )}
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Affected Employee</h3>
+                {isAdminOrTech ? (
+                  <EmployeeEmailSelect
+                    value={ticket.affected_user_id}
+                    onChange={handleAffectedUserChange}
+                    placeholder="Search by name or email..."
+                  />
+                ) : (
+                  <p className="text-lg font-medium text-slate-800">
+                    {affectedEmployee
+                      ? `${[affectedEmployee.first_name, affectedEmployee.last_name].filter(Boolean).join(" ")} <${affectedEmployee.email}>`
+                      : "Same as requester"}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -157,7 +240,7 @@ export default function TicketDetail() {
                         Assigned to you
                       </div>
                     ) : (
-                      <button 
+                      <button
                         onClick={handleAssignToMe}
                         className="text-sm bg-medical-blue hover:bg-medical-dark text-white px-4 py-2 rounded font-semibold transition-colors"
                       >
@@ -171,6 +254,30 @@ export default function TicketDetail() {
           </div>
         </div>
       </main>
+
+      {/* Save-status toast - every field on this page auto-saves, so this is
+          the only feedback that a change actually went through. */}
+      {saveStatus.state !== "idle" && (
+        <div
+          className={`fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-lg text-sm font-semibold flex items-center gap-2 ${
+            saveStatus.state === "error"
+              ? "bg-red-600 text-white"
+              : saveStatus.state === "saved"
+              ? "bg-emerald-600 text-white"
+              : "bg-slate-800 text-white"
+          }`}
+        >
+          {saveStatus.state === "saving" && <span className="animate-spin">⟳</span>}
+          {saveStatus.state === "saved" && <span>✓</span>}
+          {saveStatus.state === "error" && <span>⚠</span>}
+          {saveStatus.message}
+          {saveStatus.state === "error" && (
+            <button onClick={() => setSaveStatus({ state: "idle" })} className="ml-2 cursor-pointer opacity-80 hover:opacity-100">
+              ✕
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,20 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { API_BASE_URL } from "@/lib/api";
+
+// useSearchParams() opts the component using it out of static rendering
+// unless isolated behind a Suspense boundary - kept separate so the rest
+// of the login form can stay statically prerendered.
+function SessionExpiredBanner() {
+  const searchParams = useSearchParams();
+  if (searchParams.get("expired") !== "1") return null;
+  return (
+    <div className="mb-6 p-3 bg-amber-50 text-amber-800 border border-amber-200 rounded text-sm text-center">
+      Your session expired. Please sign in again.
+    </div>
+  );
+}
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -37,12 +50,16 @@ export default function Login() {
           <h1 className="text-3xl font-bold text-medical-dark">Clinical IT Portal</h1>
           <p className="text-slate-500 mt-2">Sign in to manage support tickets</p>
         </div>
-        
+
+        <Suspense fallback={null}>
+          <SessionExpiredBanner />
+        </Suspense>
+
         <form onSubmit={handleLogin} className="flex flex-col gap-5">
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1">Username</label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               required
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-accent"
               value={username}
@@ -51,7 +68,7 @@ export default function Login() {
           </div>
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1">Password</label>
-            <input 
+            <input
               type="password"
               required
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-accent"
@@ -59,8 +76,8 @@ export default function Login() {
               onChange={e => setPassword(e.target.value)}
             />
           </div>
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             className="mt-4 w-full bg-medical-blue hover:bg-medical-dark text-white font-bold py-3 px-4 rounded-lg transition-colors cursor-pointer"
           >
             Sign In

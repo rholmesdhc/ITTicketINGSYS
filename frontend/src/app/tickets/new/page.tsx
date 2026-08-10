@@ -1,8 +1,14 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized } from "@/lib/api";
+import EmployeeEmailSelect from "@/components/EmployeeEmailSelect";
+
+// Fallback only for if /categories can't be reached - keep in sync with
+// TICKET_CATEGORIES in backend/schemas.py, which is the actual source of
+// truth the backend validates against.
+const FALLBACK_CATEGORIES = ["Hardware/Workstation", "Software", "EHR/NextGen", "Network/Connectivity", "Telecom"];
 
 export default function NewTicket() {
   const router = useRouter();
@@ -13,11 +19,26 @@ export default function NewTicket() {
     priority: "P4",
     asset_id: ""
   });
+  const [affectedUserId, setAffectedUserId] = useState<number | null>(null);
+  const [categories, setCategories] = useState<string[]>(FALLBACK_CATEGORIES);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/categories`)
+      .then(res => (res.ok ? res.json() : FALLBACK_CATEGORIES))
+      .then((cats: string[]) => {
+        if (cats.length > 0) setCategories(cats);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const payload = { ...formData, asset_id: formData.asset_id ? parseInt(formData.asset_id) : null };
+      const payload = {
+        ...formData,
+        asset_id: formData.asset_id ? parseInt(formData.asset_id) : null,
+        affected_user_id: affectedUserId
+      };
       const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE_URL}/tickets/`, {
         method: "POST",
@@ -27,6 +48,7 @@ export default function NewTicket() {
         },
         body: JSON.stringify(payload)
       });
+      if (isUnauthorized(res)) return;
       if (res.ok) {
         router.push("/dashboard");
       } else {
@@ -66,10 +88,7 @@ export default function NewTicket() {
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Category</label>
                 <select className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none"
                         value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
-                  <option>Hardware/Workstation</option>
-                  <option>EHR/NextGen</option>
-                  <option>Network/Connectivity</option>
-                  <option>Telecom</option>
+                  {categories.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
               
@@ -83,6 +102,15 @@ export default function NewTicket() {
                   <option value="P1">P1 - Critical Patient Care Impact (1h)</option>
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">Affected Employee (Optional)</label>
+              <EmployeeEmailSelect
+                value={affectedUserId}
+                onChange={setAffectedUserId}
+                placeholder="Search by name or email if filing on someone's behalf..."
+              />
             </div>
 
             <div>
