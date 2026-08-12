@@ -33,7 +33,12 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
+    hashed_password = Column(String, nullable=True)
+    # Entra ID's immutable object id (the `oid` claim) - the durable link
+    # between this row and a Microsoft identity. Nullable because existing
+    # locally-seeded accounts don't have one until their first Entra login
+    # links them by email (see main.py's /auth/entra).
+    entra_object_id = Column(String, unique=True, index=True, nullable=True)
     role = Column(Enum(RoleEnum), default=RoleEnum.requester)
     first_name = Column(String)
     last_name = Column(String)

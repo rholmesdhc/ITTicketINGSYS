@@ -27,6 +27,12 @@ class UserLogin(BaseModel):
     username: str
     password: str
 
+# Both Entra login paths (human via POST /auth/entra, MCP service via
+# POST /auth/entra/service) just forward a Microsoft-issued access token -
+# see backend/entra_auth.py for what happens with it.
+class EntraLoginRequest(BaseModel):
+    access_token: str
+
 class UserBase(BaseModel):
     username: str
     role: str

@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_BASE_URL, isUnauthorized } from "@/lib/api";
 import EmployeeEmailSelect from "@/components/EmployeeEmailSelect";
+import ThemeToggle from "@/components/ThemeToggle";
 
 type SaveStatus = { state: "idle" | "saving" | "saved" | "error"; message?: string };
 
@@ -117,7 +118,7 @@ export default function TicketDetail() {
   const handleAssignToMe = () => patchTicket({ tech_id: parseInt(userId as string) }, "assignment");
 
   if (!ticket) {
-    return <div className="p-10 text-center font-bold text-slate-500">Loading ticket details...</div>;
+    return <div className="p-10 text-center font-bold text-slate-500 dark:text-slate-400">Loading ticket details...</div>;
   }
 
   const isAdminOrTech = role === "admin" || role === "technician";
@@ -131,22 +132,25 @@ export default function TicketDetail() {
   const clinicSiteName = clinicSites.find((s: any) => s.id === effectiveClinicSiteId)?.name;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
       <header className="bg-medical-blue text-white p-4 shadow-md flex justify-between items-center px-10">
         <h1 className="text-xl font-bold">Clinical IT Portal</h1>
-        <Link href="/dashboard" className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors">
-          Back to Dashboard
-        </Link>
+        <div className="flex items-center gap-4">
+          <ThemeToggle />
+          <Link href="/dashboard" className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors">
+            Back to Dashboard
+          </Link>
+        </div>
       </header>
 
       <main className="max-w-4xl mx-auto p-10 w-full flex-1">
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="bg-slate-100 p-6 border-b border-slate-200 flex justify-between items-center">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div className="bg-slate-100 dark:bg-slate-700 p-6 border-b border-slate-200 dark:border-slate-600 flex justify-between items-center">
             <div>
-              <h2 className="text-2xl font-bold text-slate-800">#{ticket.id} - {ticket.title}</h2>
-              <p className="text-sm text-slate-500 mt-1">Submitted on {new Date(ticket.created_at).toLocaleString()}</p>
+              <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">#{ticket.id} - {ticket.title}</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Submitted on {new Date(ticket.created_at).toLocaleString()}</p>
             </div>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${ticket.priority === 'P1' ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-slate-200 text-slate-800'}`}>
+            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${ticket.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100'}`}>
               {ticket.priority} - {ticket.status.replace("_", " ")}
             </span>
           </div>
@@ -154,18 +158,18 @@ export default function TicketDetail() {
           <div className="p-8">
             <div className="grid grid-cols-2 gap-8 mb-8">
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Category</h3>
-                <p className="text-lg font-medium text-slate-800">{ticket.category}</p>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Category</h3>
+                <p className="text-lg font-medium text-slate-800 dark:text-slate-100">{ticket.category}</p>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Asset Link</h3>
-                <p className="text-lg font-medium text-slate-800">{ticket.asset_id ? `Asset #${ticket.asset_id}` : "None Selected"}</p>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Asset Link</h3>
+                <p className="text-lg font-medium text-slate-800 dark:text-slate-100">{ticket.asset_id ? `Asset #${ticket.asset_id}` : "None Selected"}</p>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Clinic Site</h3>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Clinic Site</h3>
                 {isAdminOrTech ? (
                   <select
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-lg font-medium text-slate-800 focus:ring-2 focus:ring-medical-accent focus:outline-none cursor-pointer"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 rounded-lg text-lg font-medium text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-medical-accent focus:outline-none cursor-pointer"
                     value={effectiveClinicSiteId ?? ""}
                     onChange={(e) => handleClinicSiteChange(e.target.value ? parseInt(e.target.value) : null)}
                   >
@@ -173,10 +177,10 @@ export default function TicketDetail() {
                     {clinicSites.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 ) : (
-                  <p className="text-lg font-medium text-slate-800">{clinicSiteName || "Unknown"}</p>
+                  <p className="text-lg font-medium text-slate-800 dark:text-slate-100">{clinicSiteName || "Unknown"}</p>
                 )}
                 {isAdminOrTech && (
-                  <p className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     {ticket.clinic_site_id != null
                       ? "Set specifically for this ticket."
                       : "Defaults to the affected employee's primary site - override here if they're mobile and working elsewhere today."}
@@ -184,7 +188,7 @@ export default function TicketDetail() {
                 )}
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Affected Employee</h3>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Affected Employee</h3>
                 {isAdminOrTech ? (
                   <EmployeeEmailSelect
                     value={ticket.affected_user_id}
@@ -192,7 +196,7 @@ export default function TicketDetail() {
                     placeholder="Search by name or email..."
                   />
                 ) : (
-                  <p className="text-lg font-medium text-slate-800">
+                  <p className="text-lg font-medium text-slate-800 dark:text-slate-100">
                     {affectedEmployee
                       ? `${[affectedEmployee.first_name, affectedEmployee.last_name].filter(Boolean).join(" ")} <${affectedEmployee.email}>`
                       : "Same as requester"}
@@ -202,29 +206,29 @@ export default function TicketDetail() {
             </div>
 
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">SLA / Time to Resolution Target</h3>
+              <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">SLA / Time to Resolution Target</h3>
               <div className="flex items-center gap-3">
-                <div className={`text-xl font-mono p-3 rounded-lg border ${ticket.priority === 'P1' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                <div className={`text-xl font-mono p-3 rounded-lg border ${ticket.priority === 'P1' ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800' : 'bg-slate-50 dark:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600'}`}>
                   {ticket.sla_deadline ? new Date(ticket.sla_deadline).toLocaleString() : "No Deadline"}
                 </div>
               </div>
             </div>
 
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Description</h3>
-              <div className="bg-slate-50 p-5 rounded-lg border border-slate-200 whitespace-pre-wrap text-slate-700 text-lg">
+              <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Description</h3>
+              <div className="bg-slate-50 dark:bg-slate-700 p-5 rounded-lg border border-slate-200 dark:border-slate-600 whitespace-pre-wrap text-slate-700 dark:text-slate-200 text-lg">
                 {ticket.description}
               </div>
             </div>
 
             {isAdminOrTech && (
-              <div className="mt-8 pt-8 border-t border-slate-200">
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Technician Actions</h3>
+              <div className="mt-8 pt-8 border-t border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-4">Technician Actions</h3>
                 <div className="flex items-center gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Update Status</label>
-                    <select 
-                      className="bg-white border border-slate-300 text-slate-800 text-sm font-bold uppercase rounded px-3 py-2 outline-none cursor-pointer focus:ring-2 focus:ring-medical-accent"
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Update Status</label>
+                    <select
+                      className="bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 text-sm font-bold uppercase rounded px-3 py-2 outline-none cursor-pointer focus:ring-2 focus:ring-medical-accent"
                       value={ticket.status}
                       onChange={(e) => handleStatusChange(e.target.value)}
                     >
@@ -234,9 +238,9 @@ export default function TicketDetail() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Assignment</label>
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Assignment</label>
                     {ticket.tech_id === parseInt(userId || "0") ? (
-                      <div className="text-sm font-bold text-green-700 bg-green-50 px-4 py-2 rounded border border-green-200 inline-block">
+                      <div className="text-sm font-bold text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/30 px-4 py-2 rounded border border-green-200 dark:border-green-800 inline-block">
                         Assigned to you
                       </div>
                     ) : (

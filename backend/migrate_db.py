@@ -20,6 +20,7 @@ def migrate():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS clinic_site_id INTEGER;",
             "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS affected_user_id INTEGER;",
             "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS clinic_site_id INTEGER;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS entra_object_id VARCHAR;",
         ]
         
         for stmt in alter_statements:
@@ -77,6 +78,18 @@ def migrate():
             db.execute(text("ALTER TABLE users ADD CONSTRAINT uq_users_email UNIQUE (email);"))
             db.commit()
             print("Successfully added unique constraint for email.")
+
+        # Add unique constraint for entra_object_id (Entra ID integration)
+        unique_check_stmt = """
+        SELECT constraint_name
+        FROM information_schema.table_constraints
+        WHERE table_name='users' AND constraint_type='UNIQUE' AND constraint_name='uq_users_entra_object_id';
+        """
+        result = db.execute(text(unique_check_stmt)).fetchone()
+        if not result:
+            db.execute(text("ALTER TABLE users ADD CONSTRAINT uq_users_entra_object_id UNIQUE (entra_object_id);"))
+            db.commit()
+            print("Successfully added unique constraint for entra_object_id.")
 
         # Normalize legacy category values. Tickets created via the MCP
         # server before its category list matched the web form's landed as
