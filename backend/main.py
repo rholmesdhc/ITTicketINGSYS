@@ -3,10 +3,11 @@ from dotenv import load_dotenv
 load_dotenv()  # must run before entra_auth is imported - it reads ENTRA_* env vars at module load time
 
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-import models, schemas, auth, entra_auth
+import models, schemas, auth, entra_auth, notifications
+from mailer import send_mail
 from database import engine, get_db
 
 # Create the database tables
@@ -232,7 +233,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
 
 
 @app.post("/tickets/", response_model=schemas.TicketResponse)
-def create_ticket(ticket: schemas.TicketCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def create_ticket(ticket: schemas.TicketCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     # Standard time to resolution logic based on default requirements
     sla = None
     now = datetime.utcnow()
@@ -259,6 +260,15 @@ def create_ticket(ticket: schemas.TicketCreate, db: Session = Depends(get_db), c
     db.add(db_ticket)
     db.commit()
     db.refresh(db_ticket)
+
+    # Content is built synchronously (cheap, needs current_user/db_ticket
+    # while still attached to this request's session) - only the actual
+    # network send is deferred, so a slow/unreachable SMTP relay can never
+    # add latency to ticket creation, let alone fail the request.
+    if current_user.email:
+        to, subject, html, text = notifications.build_ticket_created(db_ticket, current_user)
+        background_tasks.add_task(send_mail, to, subject, html, text)
+
     return db_ticket
 
 @app.get("/tickets/", response_model=list[schemas.TicketResponse])
@@ -286,15 +296,21 @@ def read_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: mod
     return db_ticket
 
 @app.patch("/tickets/{ticket_id}", response_model=schemas.TicketResponse)
-def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     # Only Technicians and Admins can update tickets
     if current_user.role not in [models.RoleEnum.technician, models.RoleEnum.admin]:
         raise HTTPException(status_code=403, detail="Not authorized to update tickets")
-    
+
     db_ticket = db.query(models.Ticket).filter(models.Ticket.id == ticket_id).first()
     if not db_ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    
+
+    # Captured before applying changes so notifications only fire on an
+    # actual transition (e.g. status sent but unchanged shouldn't re-notify).
+    prev_status = db_ticket.status
+    prev_tech_id = db_ticket.tech_id
+    prev_note = db_ticket.technician_note
+
     # exclude_unset (not a plain truthy check) so a client can explicitly
     # send tech_id: null to unassign a ticket - a bare `if ticket_update.tech_id`
     # can never be true for None, so unassignment was previously impossible.
@@ -304,6 +320,27 @@ def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, db: Sessi
 
     db.commit()
     db.refresh(db_ticket)
+
+    # Same pattern as create_ticket: build email content synchronously
+    # (while db_ticket/requester are still attached to this session), defer
+    # only the actual send. Skipped entirely if the requester has no email
+    # on file (build_* would just fail to find a recipient anyway).
+    requester = db.query(models.User).filter(models.User.id == db_ticket.requester_id).first()
+    if requester and requester.email:
+        if "status" in update_data and db_ticket.status != prev_status:
+            to, subject, html, text = notifications.build_status_changed(db_ticket, requester, db_ticket.status)
+            background_tasks.add_task(send_mail, to, subject, html, text)
+
+        if "tech_id" in update_data and db_ticket.tech_id and db_ticket.tech_id != prev_tech_id:
+            technician = db.query(models.User).filter(models.User.id == db_ticket.tech_id).first()
+            if technician:
+                to, subject, html, text = notifications.build_ticket_assigned(db_ticket, requester, technician)
+                background_tasks.add_task(send_mail, to, subject, html, text)
+
+        if "technician_note" in update_data and db_ticket.technician_note and db_ticket.technician_note != prev_note:
+            to, subject, html, text = notifications.build_technician_note(db_ticket, requester, db_ticket.technician_note)
+            background_tasks.add_task(send_mail, to, subject, html, text)
+
     return db_ticket
 
 @app.post("/tickets/{ticket_id}/reopen", response_model=schemas.TicketResponse)
