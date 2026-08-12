@@ -100,6 +100,7 @@ class TicketUpdate(BaseModel):
     tech_id: Optional[int] = None
     affected_user_id: Optional[int] = None
     clinic_site_id: Optional[int] = None
+    technician_note: Optional[str] = None
 
 class TicketResponse(BaseModel):
     id: int
@@ -116,6 +117,7 @@ class TicketResponse(BaseModel):
     asset_id: Optional[int]
     affected_user_id: Optional[int]
     clinic_site_id: Optional[int]
+    technician_note: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -51,6 +51,37 @@ function DashboardSkeleton() {
   );
 }
 
+// Item: visual status timeline for requesters - a 3-step stepper reads at
+// a glance much better than a bare status word, and maps directly onto
+// the actual backend state machine (open -> in_progress -> resolved)
+// rather than inventing steps the data doesn't really track.
+const STATUS_STEPS: { key: string; label: string }[] = [
+  { key: "open", label: "Submitted" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "resolved", label: "Resolved" },
+];
+
+function StatusStepper({ status }: { status: string }) {
+  const currentIndex = Math.max(0, STATUS_STEPS.findIndex(s => s.key === status));
+  const isResolved = status === "resolved";
+  const activeColor = isResolved ? "bg-emerald-500" : "bg-medical-blue dark:bg-medical-accent";
+  return (
+    <div className="flex items-center gap-1" title={STATUS_STEPS[currentIndex]?.label || status}>
+      {STATUS_STEPS.map((step, i) => (
+        <div key={step.key} className="flex items-center">
+          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${i <= currentIndex ? activeColor : "bg-slate-200 dark:bg-slate-600"}`} />
+          {i < STATUS_STEPS.length - 1 && (
+            <div className={`w-4 h-0.5 ${i < currentIndex ? activeColor : "bg-slate-200 dark:bg-slate-600"}`} />
+          )}
+        </div>
+      ))}
+      <span className="ml-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+        {STATUS_STEPS[currentIndex]?.label || status}
+      </span>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const { resolvedTheme } = useTheme();
@@ -198,6 +229,24 @@ export default function Dashboard() {
     if (await patchTicket(ticketId, { tech_id: techId })) fetchTickets(token as string);
   };
 
+  // "This didn't fix it" - sends a resolved ticket back into the active
+  // queue instead of the requester filing a duplicate. A dedicated
+  // endpoint (not the general PATCH) since it's the requester's own call
+  // to make on their own ticket, not a technician-only edit.
+  const handleReopen = async (ticketId: number) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}/reopen`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok && token) fetchTickets(token);
+    } catch (e) {
+      console.error("Failed to reopen ticket", ticketId, e);
+    }
+  };
+
   // --- Bulk selection (item 10) ---
   const toggleSelectOne = (ticketId: number) => {
     setSelectedIds(prev => {
@@ -296,6 +345,19 @@ export default function Dashboard() {
   const openTickets = tickets.filter((t: any) => t.status === "open").length;
   const highPriorityTickets = tickets.filter((t: any) => t.priority === "P1" || t.priority === "P2").length;
   const resolvedTickets = tickets.filter((t: any) => t.status === "resolved").length;
+
+  // Requester-only figures: their own active count (open + in_progress,
+  // not just "open") and how long resolution has actually taken for them -
+  // an org-wide trend arrow means nothing when someone's only filed a
+  // couple of tickets, but "usually resolved in 2 days" tells them what to
+  // expect.
+  const myActiveTickets = tickets.filter((t: any) => t.status !== "resolved").length;
+  const avgResolutionDays = (() => {
+    const resolved = tickets.filter((t: any) => t.status === "resolved");
+    if (resolved.length === 0) return null;
+    const totalMs = resolved.reduce((sum: number, t: any) => sum + (new Date(t.updated_at).getTime() - new Date(t.created_at).getTime()), 0);
+    return totalMs / resolved.length / (24 * 60 * 60 * 1000);
+  })();
 
   // --- Trend deltas (item 13): "this week" vs "the week before" counted by
   // when each ticket hit the date field that matters for that card. There's
@@ -583,6 +645,7 @@ export default function Dashboard() {
           <Link href={`/tickets/${t.id}`} className="hover:underline">
             #{t.id} - {t.title}
           </Link>
+          {t.technician_note && <span className="ml-1.5" title="Technician left a note">📝</span>}
         </td>
         <td className="p-4 text-sm text-slate-600 dark:text-slate-300">
           {affected ? (
@@ -607,7 +670,17 @@ export default function Dashboard() {
               <option value="resolved">RESOLVED</option>
             </select>
           ) : (
-            <span className="bg-sky-100 dark:bg-sky-900/40 text-sky-800 dark:text-sky-300 px-2 py-1 rounded text-xs font-bold uppercase">{t.status.replace("_", " ")}</span>
+            <div className="flex flex-col gap-1 items-start">
+              <StatusStepper status={t.status} />
+              {t.status === "resolved" && (
+                <button
+                  onClick={() => handleReopen(t.id)}
+                  className="text-[11px] text-medical-blue dark:text-medical-accent hover:text-medical-dark dark:hover:text-medical-light hover:underline cursor-pointer font-semibold"
+                >
+                  This didn't fix it — Reopen
+                </button>
+              )}
+            </div>
           )}
         </td>
         <td className="p-4">
@@ -659,6 +732,107 @@ export default function Dashboard() {
     );
   };
 
+  // Mobile equivalent of renderRow - a stacked card instead of table
+  // columns, since a 6-8 column table just forces horizontal scrolling on
+  // a phone. Carries the same data and actions as the desktop row.
+  const renderCard = (t: any, selectable: boolean) => {
+    const overdue = isOverdue(t);
+    const affected = formatEmployee(t.affected_user_id);
+    return (
+      <div
+        key={t.id}
+        className={`p-4 rounded-xl border shadow-sm ${
+          overdue ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800" : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+        } ${selectedIds.has(t.id) ? "ring-2 ring-sky-400 dark:ring-sky-600" : ""}`}
+      >
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-start gap-2 min-w-0">
+            {isAdminOrTech && selectable && (
+              <input
+                type="checkbox"
+                checked={selectedIds.has(t.id)}
+                onChange={() => toggleSelectOne(t.id)}
+                className="w-4 h-4 mt-1 cursor-pointer shrink-0"
+                aria-label={`Select ticket #${t.id}`}
+              />
+            )}
+            <Link href={`/tickets/${t.id}`} className="font-semibold text-medical-dark dark:text-medical-accent hover:underline">
+              #{t.id} - {t.title}
+            </Link>
+            {t.technician_note && <span title="Technician left a note">📝</span>}
+          </div>
+          <span className={`shrink-0 px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-300'}`}>
+            {t.priority}
+          </span>
+        </div>
+
+        <div className="text-sm text-slate-600 dark:text-slate-300 mb-3">
+          {t.category}
+          {affected && <> · {affected.name || affected.email}</>}
+        </div>
+
+        <div className="mb-3">
+          {isAdminOrTech ? (
+            <select
+              className="bg-sky-50 dark:bg-sky-900/40 border border-sky-200 dark:border-sky-700 text-sky-800 dark:text-sky-300 text-xs font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer"
+              value={t.status}
+              onChange={(e) => handleStatusChange(t.id, e.target.value)}
+            >
+              <option value="open">OPEN</option>
+              <option value="in_progress">IN PROGRESS</option>
+              <option value="resolved">RESOLVED</option>
+            </select>
+          ) : (
+            <div className="flex flex-col gap-1 items-start">
+              <StatusStepper status={t.status} />
+              {t.status === "resolved" && (
+                <button
+                  onClick={() => handleReopen(t.id)}
+                  className="text-xs text-medical-blue dark:text-medical-accent hover:underline cursor-pointer font-semibold"
+                >
+                  This didn't fix it — Reopen
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className={`text-sm font-medium ${overdue ? "text-red-600 dark:text-red-400 font-bold flex items-center gap-2" : "text-slate-600 dark:text-slate-300"}`}>
+          {formatRelativeSla(t)}
+          {overdue && <span className="text-[10px] font-bold uppercase bg-red-600 text-white px-1.5 py-0.5 rounded">Overdue</span>}
+        </div>
+
+        {isAdminOrTech && (
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+            <select
+              className="text-xs border border-slate-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-700 dark:text-slate-100 cursor-pointer flex-1 min-w-0"
+              value={t.tech_id ?? ""}
+              onChange={(e) => handleReassign(t.id, e.target.value ? parseInt(e.target.value) : null)}
+              aria-label={`Reassign ticket #${t.id}`}
+            >
+              <option value="">Unassigned</option>
+              {allTechnicians.map(tech => (
+                <option key={tech.id} value={tech.id}>
+                  {tech.label}{tech.id === currentUserIdNum ? " (you)" : ""}
+                </option>
+              ))}
+            </select>
+            {t.tech_id === currentUserIdNum ? (
+              <span className="shrink-0 text-[10px] font-bold text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded border border-green-200 dark:border-green-700">You</span>
+            ) : (
+              <button
+                onClick={() => handleAssignToMe(t.id)}
+                className="shrink-0 text-xs text-medical-blue dark:text-medical-accent hover:underline cursor-pointer font-semibold"
+              >
+                Assign to me
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const tabButton = (tab: QuickTab, label: string, count: number) => (
     <button
       onClick={() => setActiveTab(tab)}
@@ -672,7 +846,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
-      <header className="bg-medical-blue text-white p-4 shadow-md flex justify-between items-center px-10">
+      <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold">Clinical IT Portal</h1>
           {role === "admin" && (
@@ -701,7 +875,7 @@ export default function Dashboard() {
       <OnboardingWizard isOpen={isWizardOpen} onClose={handleCloseWizard} role={role} />
 
       <main className="max-w-7xl mx-auto p-10 w-full flex-1">
-        <div className="flex justify-between items-center mb-2">
+        <div className="flex flex-wrap items-center justify-between gap-y-2 mb-2">
           <h2 className="text-3xl font-semibold text-slate-800 dark:text-slate-100">{dashboardTitle}</h2>
           <div className="flex items-center gap-3">
             <button
@@ -750,28 +924,59 @@ export default function Dashboard() {
           <DashboardSkeleton />
         ) : (
         <>
-        {/* KPI Summary Cards */}
-        <div data-tour="kpi-cards" className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Total Tickets</h3>
-            <p className="text-3xl font-bold text-slate-800 dark:text-slate-100 mt-2">{totalTickets}</p>
-            {renderTrend(totalTrend, "neutral")}
-          </div>
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Open Tickets</h3>
-            <p className="text-3xl font-bold text-amber-500 dark:text-amber-400 mt-2">{openTickets}</p>
-            {renderTrend(openTrend, "down")}
-          </div>
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">High Priority (P1/P2)</h3>
-            <p className="text-3xl font-bold text-red-500 dark:text-red-400 mt-2">{highPriorityTickets}</p>
-            {renderTrend(highPriorityTrend, "down")}
-          </div>
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Resolved</h3>
-            <p className="text-3xl font-bold text-emerald-500 dark:text-emerald-400 mt-2">{resolvedTickets}</p>
-            {renderTrend(resolvedTrend, "up")}
-          </div>
+        {/* KPI Summary Cards - technicians/admins get the full ops
+            snapshot; requesters get a smaller, personal-tracking view
+            instead (org-wide totals and priority mix mean nothing about
+            their own couple of tickets). */}
+        <div data-tour="kpi-cards" className={`grid grid-cols-1 gap-6 mb-8 ${isAdminOrTech ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+          {isAdminOrTech ? (
+            <>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Total Tickets</h3>
+                <p className="text-3xl font-bold text-slate-800 dark:text-slate-100 mt-2">{totalTickets}</p>
+                {renderTrend(totalTrend, "neutral")}
+              </div>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Open Tickets</h3>
+                <p className="text-3xl font-bold text-amber-500 dark:text-amber-400 mt-2">{openTickets}</p>
+                {renderTrend(openTrend, "down")}
+              </div>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">High Priority (P1/P2)</h3>
+                <p className="text-3xl font-bold text-red-500 dark:text-red-400 mt-2">{highPriorityTickets}</p>
+                {renderTrend(highPriorityTrend, "down")}
+              </div>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Resolved</h3>
+                <p className="text-3xl font-bold text-emerald-500 dark:text-emerald-400 mt-2">{resolvedTickets}</p>
+                {renderTrend(resolvedTrend, "up")}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">My Open Tickets</h3>
+                <p className="text-3xl font-bold text-amber-500 dark:text-amber-400 mt-2">{myActiveTickets}</p>
+                {renderTrend(openTrend, "down")}
+              </div>
+              <div className={`bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border ${overdueTickets.length > 0 ? "border-red-300 dark:border-red-800" : "border-slate-200 dark:border-slate-700"}`}>
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Overdue</h3>
+                <p className={`text-3xl font-bold mt-2 ${overdueTickets.length > 0 ? "text-red-500 dark:text-red-400" : "text-slate-800 dark:text-slate-100"}`}>{overdueTickets.length}</p>
+                <span className="text-xs text-slate-400 dark:text-slate-500 mt-1 block">
+                  {overdueTickets.length > 0 ? "Past their SLA deadline" : "Nothing past deadline"}
+                </span>
+              </div>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Resolved</h3>
+                <p className="text-3xl font-bold text-emerald-500 dark:text-emerald-400 mt-2">{resolvedTickets}</p>
+                {avgResolutionDays != null ? (
+                  <span className="text-xs text-slate-400 dark:text-slate-500 mt-1 block">
+                    Avg. {avgResolutionDays < 1 ? "under a day" : `${avgResolutionDays.toFixed(1)} days`} to resolve
+                  </span>
+                ) : renderTrend(resolvedTrend, "up")}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Technician Workload (item 14) */}
@@ -797,8 +1002,10 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Charts Section */}
-        {tickets.length > 0 && (
+        {/* Charts Section - org-wide breakdowns by technician/category
+            aren't meaningful against a requester's own handful of tickets,
+            so these are staff-only. */}
+        {isAdminOrTech && tickets.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
               <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Status</h3>
@@ -962,42 +1169,58 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div data-tour="ticket-table" className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[900px]">
-            <thead>
-              <tr className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-600">
-                {isAdminOrTech && (
-                  <th data-tour="bulk-select-header" className="p-4 font-semibold">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={toggleSelectAllVisible}
-                      className="w-4 h-4 cursor-pointer"
-                      aria-label="Select all visible tickets"
-                    />
-                  </th>
-                )}
-                <th className="p-4 font-semibold">Ticket</th>
-                <th className="p-4 font-semibold">Affected Employee</th>
-                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("category")}>Category{sortArrow("category")}</th>
-                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("status")}>Status{sortArrow("status")}</th>
-                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("priority")}>Priority{sortArrow("priority")}</th>
-                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("sla")}>Resolution SLA (TTR){sortArrow("sla")}</th>
-                {isAdminOrTech && <th className="p-4 font-semibold text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedActive.length === 0 ? (
-                <tr>
-                  <td colSpan={columnCount} className="p-10 text-center text-slate-500 dark:text-slate-400">
-                    {tickets.length === 0 ? "No tickets found. Create one to get started!" : "No active tickets match the current filters."}
-                  </td>
+        {/* Active tickets - stacked cards below the md breakpoint (a 6-8
+            column table just forces horizontal scrolling on a phone), the
+            full table at md and up. Wrapped in one data-tour target so the
+            spotlight tour finds the same element regardless of viewport. */}
+        <div data-tour="ticket-table">
+          <div className="md:hidden space-y-3">
+            {sortedActive.length === 0 ? (
+              <div className="p-8 text-center text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                {tickets.length === 0 ? "No tickets found. Create one to get started!" : "No active tickets match the current filters."}
+              </div>
+            ) : (
+              sortedActive.map(t => renderCard(t, true))
+            )}
+          </div>
+
+          <div className="hidden md:block bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[900px]">
+              <thead>
+                <tr className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-600">
+                  {isAdminOrTech && (
+                    <th data-tour="bulk-select-header" className="p-4 font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={toggleSelectAllVisible}
+                        className="w-4 h-4 cursor-pointer"
+                        aria-label="Select all visible tickets"
+                      />
+                    </th>
+                  )}
+                  <th className="p-4 font-semibold">Ticket</th>
+                  <th className="p-4 font-semibold">Affected Employee</th>
+                  <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("category")}>Category{sortArrow("category")}</th>
+                  <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("status")}>Status{sortArrow("status")}</th>
+                  <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("priority")}>Priority{sortArrow("priority")}</th>
+                  <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("sla")}>Resolution SLA (TTR){sortArrow("sla")}</th>
+                  {isAdminOrTech && <th className="p-4 font-semibold text-right">Actions</th>}
                 </tr>
-              ) : (
-                sortedActive.map(t => renderRow(t, true))
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedActive.length === 0 ? (
+                  <tr>
+                    <td colSpan={columnCount} className="p-10 text-center text-slate-500 dark:text-slate-400">
+                      {tickets.length === 0 ? "No tickets found. Create one to get started!" : "No active tickets match the current filters."}
+                    </td>
+                  </tr>
+                ) : (
+                  sortedActive.map(t => renderRow(t, true))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Resolved tickets - collapsed by default so they don't crowd the active work queue */}
@@ -1010,18 +1233,27 @@ export default function Dashboard() {
             <span className="text-slate-400 dark:text-slate-500">{resolvedExpanded ? "▲ Hide" : "▼ Show"}</span>
           </button>
           {resolvedExpanded && (
-            <div className="overflow-x-auto border-t border-slate-200 dark:border-slate-700">
-              <table className="w-full text-left border-collapse min-w-[900px]">
-                <tbody>
-                  {sortedResolved.length === 0 ? (
-                    <tr>
-                      <td colSpan={columnCount} className="p-10 text-center text-slate-500 dark:text-slate-400">No resolved tickets match the current filters.</td>
-                    </tr>
-                  ) : (
-                    sortedResolved.map(t => renderRow(t, false))
-                  )}
-                </tbody>
-              </table>
+            <div className="border-t border-slate-200 dark:border-slate-700">
+              <div className="md:hidden p-4 space-y-3">
+                {sortedResolved.length === 0 ? (
+                  <div className="p-6 text-center text-slate-500 dark:text-slate-400">No resolved tickets match the current filters.</div>
+                ) : (
+                  sortedResolved.map(t => renderCard(t, false))
+                )}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[900px]">
+                  <tbody>
+                    {sortedResolved.length === 0 ? (
+                      <tr>
+                        <td colSpan={columnCount} className="p-10 text-center text-slate-500 dark:text-slate-400">No resolved tickets match the current filters.</td>
+                      </tr>
+                    ) : (
+                      sortedResolved.map(t => renderRow(t, false))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

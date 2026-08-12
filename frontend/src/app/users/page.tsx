@@ -205,7 +205,7 @@ export default function UserManagement() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
-      <header className="bg-medical-blue text-white p-4 shadow-md flex justify-between items-center px-10">
+      <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold">Clinical IT Portal</h1>
           <Link href="/dashboard" className="text-sm font-semibold hover:text-medical-light transition-colors">

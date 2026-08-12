@@ -89,6 +89,12 @@ class Ticket(Base):
     # site because that's frequently wrong or unset for phone-intake
     # tickets - a tech needs to be able to just set it directly.
     clinic_site_id = Column(Integer, ForeignKey("clinic_sites.id"), nullable=True)
+    # A single, tech/admin-editable free-text note surfaced to the
+    # requester (e.g. "waiting on a replacement part") - deliberately a
+    # plain field, not a threaded comment log, since the only gap this
+    # closes is "the requester has zero visibility into progress between
+    # filing and resolution," not full two-way messaging.
+    technician_note = Column(String, nullable=True)
 
     requester = relationship("User", back_populates="tickets_submitted", foreign_keys=[requester_id])
     technician = relationship("User", back_populates="tickets_assigned", foreign_keys=[tech_id])

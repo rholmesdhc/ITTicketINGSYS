@@ -21,6 +21,7 @@ def migrate():
             "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS affected_user_id INTEGER;",
             "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS clinic_site_id INTEGER;",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS entra_object_id VARCHAR;",
+            "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS technician_note VARCHAR;",
         ]
         
         for stmt in alter_statements:

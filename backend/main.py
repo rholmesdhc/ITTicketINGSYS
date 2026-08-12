@@ -305,3 +305,27 @@ def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, db: Sessi
     db.commit()
     db.refresh(db_ticket)
     return db_ticket
+
+@app.post("/tickets/{ticket_id}/reopen", response_model=schemas.TicketResponse)
+def reopen_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Deliberately a separate, narrow endpoint rather than folding into the
+    # general PATCH above - that one is tech/admin only, but the whole
+    # point of this action is letting the requester who filed it say "this
+    # didn't actually fix it" without needing to be a technician. Anyone
+    # who can already fully edit tickets (tech/admin) is allowed too.
+    db_ticket = db.query(models.Ticket).filter(models.Ticket.id == ticket_id).first()
+    if not db_ticket or (
+        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+    ):
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if db_ticket.status != models.TicketStatus.resolved:
+        raise HTTPException(status_code=400, detail="Only a resolved ticket can be reopened")
+
+    # Left assigned to whoever last worked it (if anyone) rather than
+    # unassigning - they already have the context, and dropping it back
+    # into the unassigned pool would lose that continuity.
+    db_ticket.status = models.TicketStatus.open
+    db.commit()
+    db.refresh(db_ticket)
+    return db_ticket
