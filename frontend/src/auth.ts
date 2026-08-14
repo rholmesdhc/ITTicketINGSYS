@@ -9,6 +9,12 @@ import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
 // Every other page in the app only ever reads that local JWT; NextAuth's
 // own session is only consulted during this one handshake.
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // Required once this runs anywhere other than localhost or Vercel (e.g.
+  // the UAT box) - without it, NextAuth v5 rejects the callback with an
+  // "UntrustedHost" error since it can't otherwise verify the request's
+  // Host header is legitimate. Safe here because CORS_ORIGINS/the reverse
+  // proxy (once there is one) are the actual access controls, not this.
+  trustHost: true,
   providers: [
     MicrosoftEntraID({
       clientId: process.env.AZURE_AD_CLIENT_ID,

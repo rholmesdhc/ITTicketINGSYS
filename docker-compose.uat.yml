@@ -26,6 +26,18 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS}
+      # --- Entra ID login (see backend/entra_auth.py) ---
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
+      ENTRA_MCP_CLIENT_ID: ${ENTRA_MCP_CLIENT_ID}
+      ENTRA_WEB_APP_CLIENT_ID: ${ENTRA_WEB_APP_CLIENT_ID}
+      ENTRA_ADMIN_GROUP_ID: ${ENTRA_ADMIN_GROUP_ID}
+      ENTRA_TECH_GROUP_ID: ${ENTRA_TECH_GROUP_ID}
+      # --- Email notifications (see backend/mailer.py) ---
+      ENTRA_MAIL_CLIENT_ID: ${ENTRA_MAIL_CLIENT_ID}
+      ENTRA_MAIL_CLIENT_SECRET: ${ENTRA_MAIL_CLIENT_SECRET}
+      M365_FROM_NAME: ${M365_FROM_NAME}
+      M365_FROM_ADDRESS: ${M365_FROM_ADDRESS}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
     ports:
       - "8005:8005"
     volumes:
@@ -39,6 +51,16 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      # NextAuth reads these at request time, not build time (unlike
+      # NEXT_PUBLIC_API_BASE_URL, which is baked into the image at build -
+      # see deploy-uat.yml) - missing this block entirely used to mean
+      # Entra login would silently fail on UAT with no build-time signal
+      # that anything was wrong.
+      AUTH_SECRET: ${AUTH_SECRET}
+      AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID}
+      AZURE_AD_CLIENT_SECRET: ${AZURE_AD_CLIENT_SECRET}
+      AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID}
     ports:
       - "3005:3005"
 
