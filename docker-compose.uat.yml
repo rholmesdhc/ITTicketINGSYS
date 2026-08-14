@@ -38,8 +38,10 @@ services:
       M365_FROM_NAME: ${M365_FROM_NAME}
       M365_FROM_ADDRESS: ${M365_FROM_ADDRESS}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
-    ports:
-      - "8005:8005"
+    # Not published directly to the host anymore - caddy is the only
+    # thing bound to 8005 now (see below), terminating TLS in front of it.
+    expose:
+      - "8005"
     volumes:
       # Employee seed CSV (real staff PII) never ships in the image or
       # touches git - copy it onto the box once, seed_users.py reads it
@@ -61,8 +63,29 @@ services:
       AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID}
       AZURE_AD_CLIENT_SECRET: ${AZURE_AD_CLIENT_SECRET}
       AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID}
+    # Not published directly to the host anymore - see caddy below.
+    expose:
+      - "3005"
+
+  # Entra requires redirect URIs to be https:// (or exactly
+  # http://localhost) - it flatly rejects plain http:// on any other
+  # host, including private IPs. This terminates TLS (self-signed, see
+  # Caddyfile) in front of both frontend and backend so Entra login can
+  # work on UAT at all; the app containers themselves are unchanged and
+  # still speak plain HTTP internally.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
     ports:
       - "3005:3005"
+      - "8005:8005"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
 
 volumes:
   postgres_data:
+  caddy_data:
