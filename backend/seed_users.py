@@ -1,5 +1,6 @@
 import csv
 import os
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from database import SessionLocal
 import models
@@ -58,9 +59,15 @@ def seed_users():
                 processed_emails.add(email)
                 processed_usernames.add(username)
                 
-                # Check if user already exists
+                # Check if user already exists. Case-insensitive - a plain
+                # == comparison here once let a real account
+                # (rholmes@deltahealthcenter.org, JIT-provisioned via
+                # Entra login) get silently duplicated by this script,
+                # since the CSV's stored casing (rholmes@DeltaHealthCenter.org)
+                # didn't byte-match despite being the same address.
                 existing_user = db.query(models.User).filter(
-                    (models.User.email == email) | (models.User.username == username)
+                    (func.lower(models.User.email) == email.lower()) |
+                    (func.lower(models.User.username) == username.lower())
                 ).first()
                 
                 if existing_user:
