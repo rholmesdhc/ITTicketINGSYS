@@ -22,6 +22,7 @@ def migrate():
             "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS clinic_site_id INTEGER;",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS entra_object_id VARCHAR;",
             "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS technician_note VARCHAR;",
+            "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolution VARCHAR;",
         ]
         
         for stmt in alter_statements:
@@ -101,6 +102,15 @@ def migrate():
         db.commit()
         if result.rowcount:
             print(f"Normalized {result.rowcount} ticket(s) from category 'software' to 'Software'.")
+
+        # Seed the single app_settings row - models.AppSettings.__table__
+        # only creates the empty table via create_all above; GET /settings
+        # expects exactly one row to already exist.
+        existing = db.query(models.AppSettings).first()
+        if not existing:
+            db.add(models.AppSettings(id=1, require_resolution_to_resolve=False))
+            db.commit()
+            print("Seeded default app_settings row.")
 
     except Exception as e:
         print(f"Error during migration: {e}")

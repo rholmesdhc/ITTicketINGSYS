@@ -23,6 +23,14 @@ class ClinicSiteResponse(ClinicSiteBase):
     class Config:
         from_attributes = True
 
+class AppSettingsResponse(BaseModel):
+    require_resolution_to_resolve: bool
+    class Config:
+        from_attributes = True
+
+class AppSettingsUpdate(BaseModel):
+    require_resolution_to_resolve: Optional[bool] = None
+
 class UserLogin(BaseModel):
     username: str
     password: str
@@ -101,6 +109,7 @@ class TicketUpdate(BaseModel):
     affected_user_id: Optional[int] = None
     clinic_site_id: Optional[int] = None
     technician_note: Optional[str] = None
+    resolution: Optional[str] = None
 
 class TicketResponse(BaseModel):
     id: int
@@ -118,6 +127,7 @@ class TicketResponse(BaseModel):
     affected_user_id: Optional[int]
     clinic_site_id: Optional[int]
     technician_note: Optional[str] = None
+    resolution: Optional[str] = None
 
     class Config:
         from_attributes = True

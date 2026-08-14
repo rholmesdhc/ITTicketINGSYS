@@ -646,6 +646,7 @@ export default function Dashboard() {
             #{t.id} - {t.title}
           </Link>
           {t.technician_note && <span className="ml-1.5" title="Technician left a note">📝</span>}
+          {t.resolution && <span className="ml-1" title="Resolution documented">✅</span>}
         </td>
         <td className="p-4 text-sm text-slate-600 dark:text-slate-300">
           {affected ? (
@@ -760,6 +761,7 @@ export default function Dashboard() {
               #{t.id} - {t.title}
             </Link>
             {t.technician_note && <span title="Technician left a note">📝</span>}
+            {t.resolution && <span title="Resolution documented">✅</span>}
           </div>
           <span className={`shrink-0 px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-300'}`}>
             {t.priority}
@@ -850,9 +852,14 @@ export default function Dashboard() {
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold">Clinical IT Portal</h1>
           {role === "admin" && (
-            <Link href="/users" className="text-sm font-semibold hover:text-medical-light transition-colors">
-              User Management
-            </Link>
+            <>
+              <Link href="/users" className="text-sm font-semibold hover:text-medical-light transition-colors">
+                User Management
+              </Link>
+              <Link href="/settings" className="text-sm font-semibold hover:text-medical-light transition-colors">
+                Settings
+              </Link>
+            </>
           )}
         </div>
         <div className="flex items-center gap-4">

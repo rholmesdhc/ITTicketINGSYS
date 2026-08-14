@@ -199,6 +199,39 @@ def read_clinic_sites(skip: int = 0, limit: int = 100, db: Session = Depends(get
     sites = db.query(models.ClinicSite).offset(skip).limit(limit).all()
     return sites
 
+def get_app_settings(db: Session) -> models.AppSettings:
+    # migrate_db.py seeds this row, but fall back to an unsaved in-memory
+    # default (rather than 500ing) if a fresh DB somehow hasn't been
+    # migrated yet - matches this app's general pattern of degrading
+    # gracefully instead of hard-failing on missing config.
+    settings = db.query(models.AppSettings).first()
+    return settings or models.AppSettings(require_resolution_to_resolve=False)
+
+@app.get("/settings", response_model=schemas.AppSettingsResponse)
+def read_settings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Readable by any authenticated role, not just admin - the ticket
+    # detail page needs to know require_resolution_to_resolve to show the
+    # right hint to technicians, not just admins.
+    return get_app_settings(db)
+
+@app.patch("/settings", response_model=schemas.AppSettingsResponse)
+def update_settings(settings_update: schemas.AppSettingsUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role != models.RoleEnum.admin:
+        raise HTTPException(status_code=403, detail="Not authorized to change settings")
+
+    settings = db.query(models.AppSettings).first()
+    if not settings:
+        settings = models.AppSettings()
+        db.add(settings)
+
+    update_data = settings_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(settings, key, value)
+
+    db.commit()
+    db.refresh(settings)
+    return settings
+
 @app.patch("/users/{user_id}", response_model=schemas.UserResponse)
 def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     if current_user.role != models.RoleEnum.admin:
@@ -269,6 +302,17 @@ def create_ticket(ticket: schemas.TicketCreate, background_tasks: BackgroundTask
         to, subject, html, text = notifications.build_ticket_created(db_ticket, current_user)
         background_tasks.add_task(send_mail, to, subject, html, text)
 
+    # If this was filed on someone else's behalf (a common workflow here -
+    # phone intake, a tech filing for a coworker), the person the ticket is
+    # actually about should hear about it too, not just whoever's logged
+    # in. Guarded on != current_user.id so self-filed tickets that happen
+    # to also set affected_user_id to yourself don't double-send.
+    if db_ticket.affected_user_id and db_ticket.affected_user_id != current_user.id:
+        affected_user = db.query(models.User).filter(models.User.id == db_ticket.affected_user_id).first()
+        if affected_user and affected_user.email:
+            to, subject, html, text = notifications.build_ticket_created_for_affected(db_ticket, affected_user, current_user)
+            background_tasks.add_task(send_mail, to, subject, html, text)
+
     return db_ticket
 
 @app.get("/tickets/", response_model=list[schemas.TicketResponse])
@@ -310,11 +354,22 @@ def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, backgroun
     prev_status = db_ticket.status
     prev_tech_id = db_ticket.tech_id
     prev_note = db_ticket.technician_note
+    prev_affected_user_id = db_ticket.affected_user_id
 
     # exclude_unset (not a plain truthy check) so a client can explicitly
     # send tech_id: null to unassign a ticket - a bare `if ticket_update.tech_id`
     # can never be true for None, so unassignment was previously impossible.
     update_data = ticket_update.dict(exclude_unset=True)
+
+    # Checked against the *effective* resolution - either one arriving in
+    # this same request, or one already saved from an earlier autosave -
+    # before anything is applied, so a failed check leaves the ticket
+    # completely untouched rather than partially updated.
+    if update_data.get("status") == "resolved" and get_app_settings(db).require_resolution_to_resolve:
+        effective_resolution = update_data.get("resolution", db_ticket.resolution)
+        if not (effective_resolution and effective_resolution.strip()):
+            raise HTTPException(status_code=400, detail="A resolution is required before marking this ticket resolved.")
+
     for key, value in update_data.items():
         setattr(db_ticket, key, value)
 
@@ -322,24 +377,42 @@ def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, backgroun
     db.refresh(db_ticket)
 
     # Same pattern as create_ticket: build email content synchronously
-    # (while db_ticket/requester are still attached to this session), defer
-    # only the actual send. Skipped entirely if the requester has no email
-    # on file (build_* would just fail to find a recipient anyway).
+    # (while db_ticket/requester/affected_user are still attached to this
+    # session), defer only the actual send.
     requester = db.query(models.User).filter(models.User.id == db_ticket.requester_id).first()
-    if requester and requester.email:
+    affected_user = None
+    if db_ticket.affected_user_id and db_ticket.affected_user_id != db_ticket.requester_id:
+        affected_user = db.query(models.User).filter(models.User.id == db_ticket.affected_user_id).first()
+
+    technician = None
+    if "tech_id" in update_data and db_ticket.tech_id and db_ticket.tech_id != prev_tech_id:
+        technician = db.query(models.User).filter(models.User.id == db_ticket.tech_id).first()
+
+    # Status/assignment/note notifications go to both the requester and
+    # the affected employee (if one is set and isn't the same person) -
+    # whoever's logged in filed/updated it, but the affected employee is
+    # who the ticket is actually about.
+    for recipient in (r for r in (requester, affected_user) if r and r.email):
         if "status" in update_data and db_ticket.status != prev_status:
-            to, subject, html, text = notifications.build_status_changed(db_ticket, requester, db_ticket.status)
+            to, subject, html, text = notifications.build_status_changed(db_ticket, recipient, db_ticket.status)
             background_tasks.add_task(send_mail, to, subject, html, text)
 
-        if "tech_id" in update_data and db_ticket.tech_id and db_ticket.tech_id != prev_tech_id:
-            technician = db.query(models.User).filter(models.User.id == db_ticket.tech_id).first()
-            if technician:
-                to, subject, html, text = notifications.build_ticket_assigned(db_ticket, requester, technician)
-                background_tasks.add_task(send_mail, to, subject, html, text)
+        if technician:
+            to, subject, html, text = notifications.build_ticket_assigned(db_ticket, recipient, technician)
+            background_tasks.add_task(send_mail, to, subject, html, text)
 
         if "technician_note" in update_data and db_ticket.technician_note and db_ticket.technician_note != prev_note:
-            to, subject, html, text = notifications.build_technician_note(db_ticket, requester, db_ticket.technician_note)
+            to, subject, html, text = notifications.build_technician_note(db_ticket, recipient, db_ticket.technician_note)
             background_tasks.add_task(send_mail, to, subject, html, text)
+
+    # Affected-employee-only: they were just newly linked to this ticket
+    # (e.g. a tech set/changed the Affected Employee field on an existing
+    # ticket) - the same "filed on your behalf" notification create_ticket
+    # sends, since from their perspective this is the first they're
+    # hearing about it.
+    if affected_user and affected_user.email and "affected_user_id" in update_data and db_ticket.affected_user_id != prev_affected_user_id:
+        to, subject, html, text = notifications.build_ticket_created_for_affected(db_ticket, affected_user, requester)
+        background_tasks.add_task(send_mail, to, subject, html, text)
 
     return db_ticket
 

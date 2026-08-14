@@ -19,7 +19,9 @@ export default function TicketDetail() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ state: "idle" });
   const saveIdRef = useRef(0);
   const [noteDraft, setNoteDraft] = useState("");
+  const [resolutionDraft, setResolutionDraft] = useState("");
   const [reopening, setReopening] = useState(false);
+  const [requireResolution, setRequireResolution] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -68,6 +70,18 @@ export default function TicketDetail() {
       .then(res => (res.ok ? res.json() : []))
       .then(setClinicSites)
       .catch(() => setClinicSites([]));
+
+    // Drives the "required" hint on the Resolution field below - the
+    // backend is the actual enforcement (see main.py's update_ticket),
+    // this is just so the hint matches reality instead of always saying
+    // "optional" regardless of the admin's Settings choice.
+    fetch(`${API_BASE_URL}/settings`, { headers: { "Authorization": `Bearer ${token}` } })
+      .then(res => {
+        if (isUnauthorized(res)) return null;
+        return res.ok ? res.json() : null;
+      })
+      .then(data => { if (data) setRequireResolution(data.require_resolution_to_resolve); })
+      .catch(() => {});
   }, [id, router]);
 
   // Only resyncs when switching to a different ticket, not on every
@@ -75,6 +89,7 @@ export default function TicketDetail() {
   // mid-typing would reset the cursor/selection in the textarea.
   useEffect(() => {
     setNoteDraft(ticket?.technician_note || "");
+    setResolutionDraft(ticket?.resolution || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket?.id]);
 
@@ -107,7 +122,16 @@ export default function TicketDetail() {
         }, 2500);
         return true;
       }
-      setSaveStatus({ state: "error", message: `Failed to save ${label}` });
+      // Surfaces the backend's actual reason when it gives one (e.g. "A
+      // resolution is required before marking this ticket resolved.")
+      // instead of a generic message that hides why - the 4xx `detail`
+      // field is the only place that reason exists.
+      let detail: string | null = null;
+      try {
+        const body = await res.json();
+        if (typeof body?.detail === "string") detail = body.detail;
+      } catch {}
+      setSaveStatus({ state: "error", message: detail || `Failed to save ${label}` });
       return false;
     } catch (e) {
       console.error(`Failed to update ${label}`, e);
@@ -132,6 +156,12 @@ export default function TicketDetail() {
   const handleNoteBlur = () => {
     if (noteDraft !== (ticket.technician_note || "")) {
       patchTicket({ technician_note: noteDraft || null }, "technician note");
+    }
+  };
+
+  const handleResolutionBlur = () => {
+    if (resolutionDraft !== (ticket.resolution || "")) {
+      patchTicket({ resolution: resolutionDraft || null }, "resolution");
     }
   };
 
@@ -266,6 +296,19 @@ export default function TicketDetail() {
               </div>
             </div>
 
+            {/* Distinct from the note box below: this is the permanent
+                record of how the issue was actually fixed, not an
+                in-progress update - shown whenever it's set, even if the
+                ticket was later reopened, as a record of what was tried. */}
+            {!isAdminOrTech && ticket.resolution && (
+              <div className="mb-8">
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">How This Was Resolved</h3>
+                <div className="bg-emerald-50 dark:bg-emerald-900/20 border-l-4 border-emerald-500 dark:border-emerald-600 p-4 rounded-r text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
+                  {ticket.resolution}
+                </div>
+              </div>
+            )}
+
             {/* Read-only surface for the note a tech left below - the only
                 communication channel this ticket has back to whoever
                 filed it, short of a phone call. */}
@@ -329,6 +372,25 @@ export default function TicketDetail() {
                     onChange={(e) => setNoteDraft(e.target.value)}
                     onBlur={handleNoteBlur}
                     placeholder="Leave an update for whoever filed this ticket..."
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                    Resolution{" "}
+                    {requireResolution ? (
+                      <span className="font-bold normal-case text-red-500 dark:text-red-400">(required before resolving)</span>
+                    ) : (
+                      <span className="font-normal normal-case text-slate-400 dark:text-slate-500">(how you actually fixed it - included in the "Resolved" email)</span>
+                    )}
+                  </label>
+                  <textarea
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm"
+                    value={resolutionDraft}
+                    onChange={(e) => setResolutionDraft(e.target.value)}
+                    onBlur={handleResolutionBlur}
+                    placeholder="e.g. Reset the login profile and cleared the cache..."
                   />
                 </div>
               </div>

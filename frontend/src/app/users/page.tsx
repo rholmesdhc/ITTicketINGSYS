@@ -214,6 +214,9 @@ export default function UserManagement() {
           <Link href="/users" className="text-sm font-semibold text-medical-light transition-colors">
             User Management
           </Link>
+          <Link href="/settings" className="text-sm font-semibold hover:text-medical-light transition-colors">
+            Settings
+          </Link>
         </div>
         <div className="flex items-center gap-4">
           <ThemeToggle />

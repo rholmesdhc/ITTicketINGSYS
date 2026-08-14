@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Enum, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Enum, ForeignKey, DateTime, Boolean
 from sqlalchemy.orm import relationship
 import enum
 from datetime import datetime
@@ -19,6 +19,20 @@ class PriorityTier(str, enum.Enum):
     P2 = "P2"
     P3 = "P3"
     P4 = "P4" # General Inquiry
+
+class AppSettings(Base):
+    # Single-row table (see main.py's get_settings/GET+PATCH /settings) -
+    # tenant-wide toggles, not per-user preferences. New settings get a
+    # new column here + an ALTER TABLE in migrate_db.py, same pattern as
+    # every other column addition in this project.
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # If true, PATCH /tickets/{id} rejects setting status to "resolved"
+    # unless a resolution is already on file (or included in the same
+    # request) - see update_ticket in main.py.
+    require_resolution_to_resolve = Column(Boolean, default=False, nullable=False)
+
 
 class ClinicSite(Base):
     __tablename__ = "clinic_sites"
@@ -95,6 +109,12 @@ class Ticket(Base):
     # closes is "the requester has zero visibility into progress between
     # filing and resolution," not full two-way messaging.
     technician_note = Column(String, nullable=True)
+    # Distinct from technician_note above: the permanent record of how the
+    # issue was actually fixed, entered when resolving - not an
+    # in-progress status update, and not overwritten by one. Kept even if
+    # the ticket is later reopened, as a historical record of what was
+    # tried.
+    resolution = Column(String, nullable=True)
 
     requester = relationship("User", back_populates="tickets_submitted", foreign_keys=[requester_id])
     technician = relationship("User", back_populates="tickets_assigned", foreign_keys=[tech_id])
