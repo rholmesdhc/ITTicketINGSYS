@@ -79,6 +79,8 @@ services:
     depends_on:
       - frontend
       - backend
+    environment:
+      UAT_HOST: ${UAT_HOST}
     ports:
       - "3005:3005"
       - "8005:8005"

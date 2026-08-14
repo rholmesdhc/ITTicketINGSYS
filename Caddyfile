@@ -1,23 +1,37 @@
 # UAT-only TLS termination in front of the frontend/backend containers.
-# `tls internal` uses Caddy's own local CA to mint a self-signed cert on
-# the fly for whatever host/IP a client actually requests - deliberately
-# port-only site addresses (no hostname) so it doesn't matter whether
-# that's an IP, "localhost" (used by deploy-uat.yml's health check), or
-# anything else; Entra just needs the *scheme* to be https, it doesn't
-# validate the cert chain itself (the browser does, and will show a
-# one-time "not trusted" warning here - expected for a self-signed cert
-# on an internal UAT box, not something to fix unless this ever needs to
-# be publicly trusted).
+# `tls internal` uses Caddy's own local CA to mint a self-signed cert -
+# Entra just needs the *scheme* to be https, it doesn't validate the cert
+# chain itself (the browser does, and will show a one-time "not trusted"
+# warning here - expected for a self-signed cert on an internal UAT box,
+# not something to fix unless this ever needs to be publicly trusted).
+#
+# Both identities are listed explicitly (not a bare `:PORT` address) so
+# Caddy issues the cert eagerly at config load for these known names,
+# rather than needing on-demand TLS (which requires an explicit ask
+# policy Caddy won't assume by default, for good reason - a hostless
+# address serving arbitrary incoming SNI is exactly the on-demand-abuse
+# scenario that guard rail exists for). $UAT_HOST is this box's real IP,
+# set in .env.uat - "localhost" covers deploy-uat.yml's own health check,
+# which runs on this same box.
 {
 	auto_https disable_redirects
+	# TLS SNI doesn't work with bare IP literals - per the TLS spec,
+	# clients only send the SNI extension for actual hostnames, so a
+	# browser connecting to https://<ip>:port sends NO SNI at all. Without
+	# this, Caddy has no way to know which of the two identities below to
+	# serve a cert for on such a connection (only the "localhost" identity
+	# - which does get real SNI - worked before this was added). This is
+	# the path that actually matters: real users hit this by IP, not a
+	# hostname, since there is no DNS name for this internal UAT box.
+	default_sni {$UAT_HOST}
 }
 
-:3005 {
+{$UAT_HOST}:3005, localhost:3005 {
 	tls internal
 	reverse_proxy frontend:3005
 }
 
-:8005 {
+{$UAT_HOST}:8005, localhost:8005 {
 	tls internal
 	reverse_proxy backend:8005
 }
