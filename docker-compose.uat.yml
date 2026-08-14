@@ -63,6 +63,12 @@ services:
       AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID}
       AZURE_AD_CLIENT_SECRET: ${AZURE_AD_CLIENT_SECRET}
       AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID}
+      # Explicit, not auto-detected - behind the Caddy reverse proxy,
+      # NextAuth's automatic base-URL detection isn't reliable (it built
+      # https://0.0.0.0:3005/... instead of the real IP on the first live
+      # attempt, which Entra rejected as a redirect-URI mismatch). This
+      # removes the ambiguity entirely.
+      AUTH_URL: https://${UAT_HOST}:3005
     # Not published directly to the host anymore - see caddy below.
     expose:
       - "3005"
