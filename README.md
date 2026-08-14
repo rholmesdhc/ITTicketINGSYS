@@ -51,6 +51,10 @@ set DATABASE_URL=postgresql://<user>:<password>@localhost:5432/<db_name>
 set SECRET_KEY=<a-random-secret>
 set CORS_ORIGINS=http://localhost:3005
 ```
+Provision the schema (creates every table + seed data - see `backend/alembic/`; run this again after pulling any change that includes a new migration):
+```bash
+alembic upgrade head
+```
 Run it (must be on port **8005** — the frontend is hardcoded to call it there):
 ```bash
 uvicorn main:app --host 127.0.0.1 --port 8005

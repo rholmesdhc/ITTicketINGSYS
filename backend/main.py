@@ -8,11 +8,17 @@ from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
 import models, schemas, auth, entra_auth, notifications
 from mailer import send_mail
-from database import engine, get_db
+from database import get_db
 
-# Create the database tables
-models.Base.metadata.create_all(bind=engine)
-
+# Schema is provisioned by Alembic now (see alembic/ - `alembic upgrade
+# head`), not by the app itself at import time. This used to be
+# `models.Base.metadata.create_all(bind=engine)`, which is exactly the
+# footgun Alembic replaces: once a schema change needs real logic (a
+# backfill, a rename, a constraint that can't just be inferred from the
+# model diff), create_all() can't express it, and worse, it would keep
+# silently "succeeding" (creating nothing, since the table already
+# exists) even if the real migration never got run - masking a bad deploy
+# instead of failing it.
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="IT Ticketing System API")
@@ -200,10 +206,10 @@ def read_clinic_sites(skip: int = 0, limit: int = 100, db: Session = Depends(get
     return sites
 
 def get_app_settings(db: Session) -> models.AppSettings:
-    # migrate_db.py seeds this row, but fall back to an unsaved in-memory
-    # default (rather than 500ing) if a fresh DB somehow hasn't been
-    # migrated yet - matches this app's general pattern of degrading
-    # gracefully instead of hard-failing on missing config.
+    # The baseline Alembic migration seeds this row, but fall back to an
+    # unsaved in-memory default (rather than 500ing) if a fresh DB somehow
+    # hasn't been migrated yet - matches this app's general pattern of
+    # degrading gracefully instead of hard-failing on missing config.
     settings = db.query(models.AppSettings).first()
     return settings or models.AppSettings(require_resolution_to_resolve=False)
 

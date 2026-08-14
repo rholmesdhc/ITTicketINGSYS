@@ -23,8 +23,8 @@ class PriorityTier(str, enum.Enum):
 class AppSettings(Base):
     # Single-row table (see main.py's get_settings/GET+PATCH /settings) -
     # tenant-wide toggles, not per-user preferences. New settings get a
-    # new column here + an ALTER TABLE in migrate_db.py, same pattern as
-    # every other column addition in this project.
+    # new column here + an Alembic migration (`alembic revision
+    # --autogenerate`).
     __tablename__ = "app_settings"
 
     id = Column(Integer, primary_key=True, index=True)
