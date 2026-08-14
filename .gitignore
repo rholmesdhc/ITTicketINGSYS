@@ -9,7 +9,12 @@ venv/
 # env files (secrets) - never commit
 .env
 .env.*
-!.env.*.example
+# Bug fix: the pattern above was `!.env.*.example`, which only un-ignores
+# a name like `.env.local.example` (something between the two dots) - it
+# never matched the literal filename `.env.example` at all, so
+# backend/.env.example (pure documentation, no real secrets) had been
+# silently excluded from every commit since it was created.
+!.env.example
 
 # Node / Next.js
 node_modules/

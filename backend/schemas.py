@@ -23,9 +23,23 @@ class ClinicSiteResponse(ClinicSiteBase):
     class Config:
         from_attributes = True
 
+class AppSettingsResponse(BaseModel):
+    require_resolution_to_resolve: bool
+    class Config:
+        from_attributes = True
+
+class AppSettingsUpdate(BaseModel):
+    require_resolution_to_resolve: Optional[bool] = None
+
 class UserLogin(BaseModel):
     username: str
     password: str
+
+# Both Entra login paths (human via POST /auth/entra, MCP service via
+# POST /auth/entra/service) just forward a Microsoft-issued access token -
+# see backend/entra_auth.py for what happens with it.
+class EntraLoginRequest(BaseModel):
+    access_token: str
 
 class UserBase(BaseModel):
     username: str
@@ -94,6 +108,8 @@ class TicketUpdate(BaseModel):
     tech_id: Optional[int] = None
     affected_user_id: Optional[int] = None
     clinic_site_id: Optional[int] = None
+    technician_note: Optional[str] = None
+    resolution: Optional[str] = None
 
 class TicketResponse(BaseModel):
     id: int
@@ -110,6 +126,8 @@ class TicketResponse(BaseModel):
     asset_id: Optional[int]
     affected_user_id: Optional[int]
     clinic_site_id: Optional[int]
+    technician_note: Optional[str] = None
+    resolution: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -67,12 +67,14 @@ jobs:
 
       - name: Health check
         run: |
+          # https + -k (self-signed cert, see Caddyfile - Entra requires
+          # https:// on this box, plain http was removed entirely)
           for i in $(seq 1 15); do
-            curl --fail -s http://localhost:8005/docs > /dev/null && backend_ok=1 && break
+            curl --fail -sk https://localhost:8005/docs > /dev/null && backend_ok=1 && break
             sleep 2
           done
           for i in $(seq 1 15); do
-            curl --fail -s http://localhost:3005/login > /dev/null && frontend_ok=1 && break
+            curl --fail -sk https://localhost:3005/login > /dev/null && frontend_ok=1 && break
             sleep 2
           done
           if [ -z "$backend_ok" ] || [ -z "$frontend_ok" ]; then

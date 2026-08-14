@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_BASE_URL, isUnauthorized } from "@/lib/api";
 import EmployeeEmailSelect from "@/components/EmployeeEmailSelect";
+import ThemeToggle from "@/components/ThemeToggle";
 
 type SaveStatus = { state: "idle" | "saving" | "saved" | "error"; message?: string };
 
@@ -17,6 +18,10 @@ export default function TicketDetail() {
   const [clinicSites, setClinicSites] = useState<any[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ state: "idle" });
   const saveIdRef = useRef(0);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [resolutionDraft, setResolutionDraft] = useState("");
+  const [reopening, setReopening] = useState(false);
+  const [requireResolution, setRequireResolution] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -65,7 +70,28 @@ export default function TicketDetail() {
       .then(res => (res.ok ? res.json() : []))
       .then(setClinicSites)
       .catch(() => setClinicSites([]));
+
+    // Drives the "required" hint on the Resolution field below - the
+    // backend is the actual enforcement (see main.py's update_ticket),
+    // this is just so the hint matches reality instead of always saying
+    // "optional" regardless of the admin's Settings choice.
+    fetch(`${API_BASE_URL}/settings`, { headers: { "Authorization": `Bearer ${token}` } })
+      .then(res => {
+        if (isUnauthorized(res)) return null;
+        return res.ok ? res.json() : null;
+      })
+      .then(data => { if (data) setRequireResolution(data.require_resolution_to_resolve); })
+      .catch(() => {});
   }, [id, router]);
+
+  // Only resyncs when switching to a different ticket, not on every
+  // server-echoed update from our own save - otherwise a save triggered
+  // mid-typing would reset the cursor/selection in the textarea.
+  useEffect(() => {
+    setNoteDraft(ticket?.technician_note || "");
+    setResolutionDraft(ticket?.resolution || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket?.id]);
 
   // Every field on this page auto-saves on change - there's no Save button
   // because there's nothing left un-submitted. This helper is what actually
@@ -96,7 +122,16 @@ export default function TicketDetail() {
         }, 2500);
         return true;
       }
-      setSaveStatus({ state: "error", message: `Failed to save ${label}` });
+      // Surfaces the backend's actual reason when it gives one (e.g. "A
+      // resolution is required before marking this ticket resolved.")
+      // instead of a generic message that hides why - the 4xx `detail`
+      // field is the only place that reason exists.
+      let detail: string | null = null;
+      try {
+        const body = await res.json();
+        if (typeof body?.detail === "string") detail = body.detail;
+      } catch {}
+      setSaveStatus({ state: "error", message: detail || `Failed to save ${label}` });
       return false;
     } catch (e) {
       console.error(`Failed to update ${label}`, e);
@@ -116,8 +151,45 @@ export default function TicketDetail() {
 
   const handleAssignToMe = () => patchTicket({ tech_id: parseInt(userId as string) }, "assignment");
 
+  // Saves on blur (not per-keystroke) - a free-text field auto-saving on
+  // every keystroke would spam the API and thrash the save-status toast.
+  const handleNoteBlur = () => {
+    if (noteDraft !== (ticket.technician_note || "")) {
+      patchTicket({ technician_note: noteDraft || null }, "technician note");
+    }
+  };
+
+  const handleResolutionBlur = () => {
+    if (resolutionDraft !== (ticket.resolution || "")) {
+      patchTicket({ resolution: resolutionDraft || null }, "resolution");
+    }
+  };
+
+  // "This didn't fix it" - sends the ticket back into the active queue.
+  // Backend restricts this to the requester who filed it or staff, and
+  // only while it's actually resolved.
+  const handleReopen = async () => {
+    setReopening(true);
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/tickets/${ticket.id}/reopen`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok) {
+        const updated = await res.json();
+        setTicket(updated);
+      }
+    } catch (e) {
+      console.error("Failed to reopen ticket", e);
+    } finally {
+      setReopening(false);
+    }
+  };
+
   if (!ticket) {
-    return <div className="p-10 text-center font-bold text-slate-500">Loading ticket details...</div>;
+    return <div className="p-10 text-center font-bold text-slate-500 dark:text-slate-400">Loading ticket details...</div>;
   }
 
   const isAdminOrTech = role === "admin" || role === "technician";
@@ -131,41 +203,55 @@ export default function TicketDetail() {
   const clinicSiteName = clinicSites.find((s: any) => s.id === effectiveClinicSiteId)?.name;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <header className="bg-medical-blue text-white p-4 shadow-md flex justify-between items-center px-10">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
+      <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
         <h1 className="text-xl font-bold">Clinical IT Portal</h1>
-        <Link href="/dashboard" className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors">
-          Back to Dashboard
-        </Link>
+        <div className="flex items-center gap-4">
+          <ThemeToggle />
+          <Link href="/dashboard" className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors">
+            Back to Dashboard
+          </Link>
+        </div>
       </header>
 
       <main className="max-w-4xl mx-auto p-10 w-full flex-1">
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="bg-slate-100 p-6 border-b border-slate-200 flex justify-between items-center">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div className="bg-slate-100 dark:bg-slate-700 p-6 border-b border-slate-200 dark:border-slate-600 flex justify-between items-center">
             <div>
-              <h2 className="text-2xl font-bold text-slate-800">#{ticket.id} - {ticket.title}</h2>
-              <p className="text-sm text-slate-500 mt-1">Submitted on {new Date(ticket.created_at).toLocaleString()}</p>
+              <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">#{ticket.id} - {ticket.title}</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Submitted on {new Date(ticket.created_at).toLocaleString()}</p>
             </div>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${ticket.priority === 'P1' ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-slate-200 text-slate-800'}`}>
-              {ticket.priority} - {ticket.status.replace("_", " ")}
-            </span>
+            <div className="flex flex-col items-end gap-2">
+              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${ticket.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100'}`}>
+                {ticket.priority} - {ticket.status.replace("_", " ")}
+              </span>
+              {!isAdminOrTech && ticket.status === "resolved" && (
+                <button
+                  onClick={handleReopen}
+                  disabled={reopening}
+                  className="text-xs text-medical-blue dark:text-medical-accent hover:underline cursor-pointer font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {reopening ? "Reopening..." : "This didn't fix it — Reopen"}
+                </button>
+              )}
+            </div>
           </div>
-          
+
           <div className="p-8">
             <div className="grid grid-cols-2 gap-8 mb-8">
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Category</h3>
-                <p className="text-lg font-medium text-slate-800">{ticket.category}</p>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Category</h3>
+                <p className="text-lg font-medium text-slate-800 dark:text-slate-100">{ticket.category}</p>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Asset Link</h3>
-                <p className="text-lg font-medium text-slate-800">{ticket.asset_id ? `Asset #${ticket.asset_id}` : "None Selected"}</p>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Asset Link</h3>
+                <p className="text-lg font-medium text-slate-800 dark:text-slate-100">{ticket.asset_id ? `Asset #${ticket.asset_id}` : "None Selected"}</p>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Clinic Site</h3>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Clinic Site</h3>
                 {isAdminOrTech ? (
                   <select
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-lg font-medium text-slate-800 focus:ring-2 focus:ring-medical-accent focus:outline-none cursor-pointer"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 rounded-lg text-lg font-medium text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-medical-accent focus:outline-none cursor-pointer"
                     value={effectiveClinicSiteId ?? ""}
                     onChange={(e) => handleClinicSiteChange(e.target.value ? parseInt(e.target.value) : null)}
                   >
@@ -173,10 +259,10 @@ export default function TicketDetail() {
                     {clinicSites.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 ) : (
-                  <p className="text-lg font-medium text-slate-800">{clinicSiteName || "Unknown"}</p>
+                  <p className="text-lg font-medium text-slate-800 dark:text-slate-100">{clinicSiteName || "Unknown"}</p>
                 )}
                 {isAdminOrTech && (
-                  <p className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     {ticket.clinic_site_id != null
                       ? "Set specifically for this ticket."
                       : "Defaults to the affected employee's primary site - override here if they're mobile and working elsewhere today."}
@@ -184,7 +270,7 @@ export default function TicketDetail() {
                 )}
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Affected Employee</h3>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Affected Employee</h3>
                 {isAdminOrTech ? (
                   <EmployeeEmailSelect
                     value={ticket.affected_user_id}
@@ -192,7 +278,7 @@ export default function TicketDetail() {
                     placeholder="Search by name or email..."
                   />
                 ) : (
-                  <p className="text-lg font-medium text-slate-800">
+                  <p className="text-lg font-medium text-slate-800 dark:text-slate-100">
                     {affectedEmployee
                       ? `${[affectedEmployee.first_name, affectedEmployee.last_name].filter(Boolean).join(" ")} <${affectedEmployee.email}>`
                       : "Same as requester"}
@@ -202,29 +288,54 @@ export default function TicketDetail() {
             </div>
 
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">SLA / Time to Resolution Target</h3>
+              <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">SLA / Time to Resolution Target</h3>
               <div className="flex items-center gap-3">
-                <div className={`text-xl font-mono p-3 rounded-lg border ${ticket.priority === 'P1' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                <div className={`text-xl font-mono p-3 rounded-lg border ${ticket.priority === 'P1' ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800' : 'bg-slate-50 dark:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600'}`}>
                   {ticket.sla_deadline ? new Date(ticket.sla_deadline).toLocaleString() : "No Deadline"}
                 </div>
               </div>
             </div>
 
+            {/* Distinct from the note box below: this is the permanent
+                record of how the issue was actually fixed, not an
+                in-progress update - shown whenever it's set, even if the
+                ticket was later reopened, as a record of what was tried. */}
+            {!isAdminOrTech && ticket.resolution && (
+              <div className="mb-8">
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">How This Was Resolved</h3>
+                <div className="bg-emerald-50 dark:bg-emerald-900/20 border-l-4 border-emerald-500 dark:border-emerald-600 p-4 rounded-r text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
+                  {ticket.resolution}
+                </div>
+              </div>
+            )}
+
+            {/* Read-only surface for the note a tech left below - the only
+                communication channel this ticket has back to whoever
+                filed it, short of a phone call. */}
+            {!isAdminOrTech && ticket.technician_note && (
+              <div className="mb-8">
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Note From Your Technician</h3>
+                <div className="bg-sky-50 dark:bg-sky-900/20 border-l-4 border-sky-400 dark:border-sky-600 p-4 rounded-r text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
+                  {ticket.technician_note}
+                </div>
+              </div>
+            )}
+
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Description</h3>
-              <div className="bg-slate-50 p-5 rounded-lg border border-slate-200 whitespace-pre-wrap text-slate-700 text-lg">
+              <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Description</h3>
+              <div className="bg-slate-50 dark:bg-slate-700 p-5 rounded-lg border border-slate-200 dark:border-slate-600 whitespace-pre-wrap text-slate-700 dark:text-slate-200 text-lg">
                 {ticket.description}
               </div>
             </div>
 
             {isAdminOrTech && (
-              <div className="mt-8 pt-8 border-t border-slate-200">
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Technician Actions</h3>
+              <div className="mt-8 pt-8 border-t border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-4">Technician Actions</h3>
                 <div className="flex items-center gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Update Status</label>
-                    <select 
-                      className="bg-white border border-slate-300 text-slate-800 text-sm font-bold uppercase rounded px-3 py-2 outline-none cursor-pointer focus:ring-2 focus:ring-medical-accent"
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Update Status</label>
+                    <select
+                      className="bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 text-sm font-bold uppercase rounded px-3 py-2 outline-none cursor-pointer focus:ring-2 focus:ring-medical-accent"
                       value={ticket.status}
                       onChange={(e) => handleStatusChange(e.target.value)}
                     >
@@ -234,9 +345,9 @@ export default function TicketDetail() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Assignment</label>
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Assignment</label>
                     {ticket.tech_id === parseInt(userId || "0") ? (
-                      <div className="text-sm font-bold text-green-700 bg-green-50 px-4 py-2 rounded border border-green-200 inline-block">
+                      <div className="text-sm font-bold text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/30 px-4 py-2 rounded border border-green-200 dark:border-green-800 inline-block">
                         Assigned to you
                       </div>
                     ) : (
@@ -248,6 +359,39 @@ export default function TicketDetail() {
                       </button>
                     )}
                   </div>
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                    Note to Requester <span className="font-normal normal-case text-slate-400 dark:text-slate-500">(visible to them - e.g. "waiting on a replacement part")</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none text-sm"
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    onBlur={handleNoteBlur}
+                    placeholder="Leave an update for whoever filed this ticket..."
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                    Resolution{" "}
+                    {requireResolution ? (
+                      <span className="font-bold normal-case text-red-500 dark:text-red-400">(required before resolving)</span>
+                    ) : (
+                      <span className="font-normal normal-case text-slate-400 dark:text-slate-500">(how you actually fixed it - included in the "Resolved" email)</span>
+                    )}
+                  </label>
+                  <textarea
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm"
+                    value={resolutionDraft}
+                    onChange={(e) => setResolutionDraft(e.target.value)}
+                    onBlur={handleResolutionBlur}
+                    placeholder="e.g. Reset the login profile and cleared the cache..."
+                  />
                 </div>
               </div>
             )}

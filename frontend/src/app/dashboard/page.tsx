@@ -3,8 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
-import { API_BASE_URL, isUnauthorized } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized, logout } from "@/lib/api";
 import { isOverdue, isDueWithin, formatRelativeSla, urgencyRank, PRIORITY_RANK } from "@/lib/ticketSla";
+import OnboardingWizard from "@/components/OnboardingWizard";
+import ThemeToggle from "@/components/ThemeToggle";
+import { useTheme } from "@/components/ThemeProvider";
 
 type Employee = { id: number; email: string | null; first_name: string | null; last_name: string | null; role: string };
 
@@ -18,29 +21,29 @@ function DashboardSkeleton() {
     <>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         {[0, 1, 2, 3].map(i => (
-          <div key={i} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 animate-pulse">
-            <div className="h-3 bg-slate-200 rounded w-24 mb-3" />
-            <div className="h-8 bg-slate-200 rounded w-16" />
+          <div key={i} className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 animate-pulse">
+            <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-24 mb-3" />
+            <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-16" />
           </div>
         ))}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         {[0, 1, 2].map(i => (
-          <div key={i} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 animate-pulse">
-            <div className="h-5 bg-slate-200 rounded w-32 mb-4" />
-            <div className="h-64 bg-slate-100 rounded" />
+          <div key={i} className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 animate-pulse">
+            <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded w-32 mb-4" />
+            <div className="h-64 bg-slate-100 dark:bg-slate-700 rounded" />
           </div>
         ))}
       </div>
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="h-12 bg-slate-100 border-b border-slate-200" />
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div className="h-12 bg-slate-100 dark:bg-slate-700 border-b border-slate-200 dark:border-slate-700" />
         {[0, 1, 2, 3, 4].map(i => (
-          <div key={i} className="p-4 border-b border-slate-100 animate-pulse flex gap-4 items-center">
-            <div className="h-4 bg-slate-200 rounded flex-1" />
-            <div className="h-4 bg-slate-200 rounded w-28" />
-            <div className="h-4 bg-slate-200 rounded w-20" />
-            <div className="h-4 bg-slate-200 rounded w-16" />
-            <div className="h-4 bg-slate-200 rounded w-24" />
+          <div key={i} className="p-4 border-b border-slate-100 dark:border-slate-700 animate-pulse flex gap-4 items-center">
+            <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded flex-1" />
+            <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-28" />
+            <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-20" />
+            <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-16" />
+            <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-24" />
           </div>
         ))}
       </div>
@@ -48,8 +51,42 @@ function DashboardSkeleton() {
   );
 }
 
+// Item: visual status timeline for requesters - a 3-step stepper reads at
+// a glance much better than a bare status word, and maps directly onto
+// the actual backend state machine (open -> in_progress -> resolved)
+// rather than inventing steps the data doesn't really track.
+const STATUS_STEPS: { key: string; label: string }[] = [
+  { key: "open", label: "Submitted" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "resolved", label: "Resolved" },
+];
+
+function StatusStepper({ status }: { status: string }) {
+  const currentIndex = Math.max(0, STATUS_STEPS.findIndex(s => s.key === status));
+  const isResolved = status === "resolved";
+  const activeColor = isResolved ? "bg-emerald-500" : "bg-medical-blue dark:bg-medical-accent";
+  return (
+    <div className="flex items-center gap-1" title={STATUS_STEPS[currentIndex]?.label || status}>
+      {STATUS_STEPS.map((step, i) => (
+        <div key={step.key} className="flex items-center">
+          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${i <= currentIndex ? activeColor : "bg-slate-200 dark:bg-slate-600"}`} />
+          {i < STATUS_STEPS.length - 1 && (
+            <div className={`w-4 h-0.5 ${i < currentIndex ? activeColor : "bg-slate-200 dark:bg-slate-600"}`} />
+          )}
+        </div>
+      ))}
+      <span className="ml-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+        {STATUS_STEPS[currentIndex]?.label || status}
+      </span>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
+  const { resolvedTheme } = useTheme();
+  const gridStroke = resolvedTheme === "dark" ? "#334155" : "#e2e8f0";
+  const cursorFill = resolvedTheme === "dark" ? "#1e293b" : "#f1f5f9";
   const [tickets, setTickets] = useState<any[]>([]);
   const [directory, setDirectory] = useState<Employee[]>([]);
   const [role, setRole] = useState<string | null>(null);
@@ -77,6 +114,12 @@ export default function Dashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
+  // Onboarding wizard: shown automatically once per account (tracked by
+  // userId, not just "ever seen on this browser" - a shared machine with
+  // multiple accounts should still onboard each one), replayable anytime
+  // via the Help button.
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) {
@@ -84,8 +127,13 @@ export default function Dashboard() {
       return;
     }
     setRole(localStorage.getItem("role"));
-    setUserId(localStorage.getItem("userId"));
+    const uid = localStorage.getItem("userId");
+    setUserId(uid);
     fetchTickets(token);
+
+    if (uid && !localStorage.getItem(`onboarding_seen_${uid}`)) {
+      setIsWizardOpen(true);
+    }
 
     fetch(`${API_BASE_URL}/users/directory`, {
       headers: { "Authorization": `Bearer ${token}` }
@@ -138,6 +186,11 @@ export default function Dashboard() {
     if (token) fetchTickets(token, { showSpinner: true });
   };
 
+  const handleCloseWizard = () => {
+    setIsWizardOpen(false);
+    if (userId) localStorage.setItem(`onboarding_seen_${userId}`, "1");
+  };
+
   // Shared single-ticket PATCH used by row actions, inline reassignment,
   // bulk actions, and keyboard shortcuts alike. Returns whether it succeeded.
   const patchTicket = async (ticketId: number, body: Record<string, unknown>): Promise<boolean> => {
@@ -174,6 +227,24 @@ export default function Dashboard() {
   const handleReassign = async (ticketId: number, techId: number | null) => {
     const token = localStorage.getItem("token");
     if (await patchTicket(ticketId, { tech_id: techId })) fetchTickets(token as string);
+  };
+
+  // "This didn't fix it" - sends a resolved ticket back into the active
+  // queue instead of the requester filing a duplicate. A dedicated
+  // endpoint (not the general PATCH) since it's the requester's own call
+  // to make on their own ticket, not a technician-only edit.
+  const handleReopen = async (ticketId: number) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}/reopen`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok && token) fetchTickets(token);
+    } catch (e) {
+      console.error("Failed to reopen ticket", ticketId, e);
+    }
   };
 
   // --- Bulk selection (item 10) ---
@@ -274,6 +345,19 @@ export default function Dashboard() {
   const openTickets = tickets.filter((t: any) => t.status === "open").length;
   const highPriorityTickets = tickets.filter((t: any) => t.priority === "P1" || t.priority === "P2").length;
   const resolvedTickets = tickets.filter((t: any) => t.status === "resolved").length;
+
+  // Requester-only figures: their own active count (open + in_progress,
+  // not just "open") and how long resolution has actually taken for them -
+  // an org-wide trend arrow means nothing when someone's only filed a
+  // couple of tickets, but "usually resolved in 2 days" tells them what to
+  // expect.
+  const myActiveTickets = tickets.filter((t: any) => t.status !== "resolved").length;
+  const avgResolutionDays = (() => {
+    const resolved = tickets.filter((t: any) => t.status === "resolved");
+    if (resolved.length === 0) return null;
+    const totalMs = resolved.reduce((sum: number, t: any) => sum + (new Date(t.updated_at).getTime() - new Date(t.created_at).getTime()), 0);
+    return totalMs / resolved.length / (24 * 60 * 60 * 1000);
+  })();
 
   // --- Trend deltas (item 13): "this week" vs "the week before" counted by
   // when each ticket hit the date field that matters for that card. There's
@@ -543,7 +627,7 @@ export default function Dashboard() {
     const overdue = isOverdue(t);
     const affected = formatEmployee(t.affected_user_id);
     return (
-      <tr key={t.id} className={`border-b border-slate-100 hover:bg-slate-50 ${overdue ? "bg-red-50" : ""} ${selectedIds.has(t.id) ? "bg-sky-50" : ""}`}>
+      <tr key={t.id} className={`border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 ${overdue ? "bg-red-50 dark:bg-red-900/20" : ""} ${selectedIds.has(t.id) ? "bg-sky-50 dark:bg-sky-900/20" : ""}`}>
         {isAdminOrTech && (
           <td className="p-4">
             {selectable && (
@@ -557,26 +641,28 @@ export default function Dashboard() {
             )}
           </td>
         )}
-        <td className="p-4 font-medium text-medical-dark">
+        <td className="p-4 font-medium text-medical-dark dark:text-medical-accent">
           <Link href={`/tickets/${t.id}`} className="hover:underline">
             #{t.id} - {t.title}
           </Link>
+          {t.technician_note && <span className="ml-1.5" title="Technician left a note">📝</span>}
+          {t.resolution && <span className="ml-1" title="Resolution documented">✅</span>}
         </td>
-        <td className="p-4 text-sm text-slate-600">
+        <td className="p-4 text-sm text-slate-600 dark:text-slate-300">
           {affected ? (
             <>
               <div>{affected.name || "—"}</div>
-              <div className="text-xs text-slate-400">{affected.email}</div>
+              <div className="text-xs text-slate-400 dark:text-slate-500">{affected.email}</div>
             </>
           ) : (
-            <span className="text-slate-400">Same as requester</span>
+            <span className="text-slate-400 dark:text-slate-500">Same as requester</span>
           )}
         </td>
-        <td className="p-4">{t.category}</td>
+        <td className="p-4 text-slate-700 dark:text-slate-300">{t.category}</td>
         <td className="p-4">
           {isAdminOrTech ? (
             <select
-              className="bg-sky-50 border border-sky-200 text-sky-800 text-xs font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer"
+              className="bg-sky-50 dark:bg-sky-900/40 border border-sky-200 dark:border-sky-700 text-sky-800 dark:text-sky-300 text-xs font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer"
               value={t.status}
               onChange={(e) => handleStatusChange(t.id, e.target.value)}
             >
@@ -585,22 +671,32 @@ export default function Dashboard() {
               <option value="resolved">RESOLVED</option>
             </select>
           ) : (
-            <span className="bg-sky-100 text-sky-800 px-2 py-1 rounded text-xs font-bold uppercase">{t.status.replace("_", " ")}</span>
+            <div className="flex flex-col gap-1 items-start">
+              <StatusStepper status={t.status} />
+              {t.status === "resolved" && (
+                <button
+                  onClick={() => handleReopen(t.id)}
+                  className="text-[11px] text-medical-blue dark:text-medical-accent hover:text-medical-dark dark:hover:text-medical-light hover:underline cursor-pointer font-semibold"
+                >
+                  This didn't fix it — Reopen
+                </button>
+              )}
+            </div>
           )}
         </td>
         <td className="p-4">
-          <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-slate-100 text-slate-800'}`}>
+          <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-300'}`}>
             {t.priority}
           </span>
         </td>
         <td className="p-4 text-sm font-medium">
-          <div className={overdue ? "text-red-600 font-bold flex items-center gap-2" : "text-slate-600"}>
+          <div className={overdue ? "text-red-600 dark:text-red-400 font-bold flex items-center gap-2" : "text-slate-600 dark:text-slate-300"}>
             {formatRelativeSla(t)}
             {overdue && (
               <span className="text-[10px] font-bold uppercase bg-red-600 text-white px-1.5 py-0.5 rounded">Overdue</span>
             )}
           </div>
-          <div className="text-xs text-slate-400">
+          <div className="text-xs text-slate-400 dark:text-slate-500">
             {t.sla_deadline ? new Date(t.sla_deadline).toLocaleString() : ""}
           </div>
         </td>
@@ -608,7 +704,7 @@ export default function Dashboard() {
           <td className="p-4 text-right">
             <div className="flex flex-col items-end gap-1">
               <select
-                className="text-xs border border-slate-300 rounded px-2 py-1 bg-white cursor-pointer max-w-[160px]"
+                className="text-xs border border-slate-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-700 dark:text-slate-100 cursor-pointer max-w-[160px]"
                 value={t.tech_id ?? ""}
                 onChange={(e) => handleReassign(t.id, e.target.value ? parseInt(e.target.value) : null)}
                 aria-label={`Reassign ticket #${t.id}`}
@@ -621,11 +717,11 @@ export default function Dashboard() {
                 ))}
               </select>
               {t.tech_id === currentUserIdNum ? (
-                <span className="text-[10px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded border border-green-200">Assigned to you</span>
+                <span className="text-[10px] font-bold text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded border border-green-200 dark:border-green-700">Assigned to you</span>
               ) : (
                 <button
                   onClick={() => handleAssignToMe(t.id)}
-                  className="text-[11px] text-medical-blue hover:text-medical-dark hover:underline cursor-pointer font-semibold"
+                  className="text-[11px] text-medical-blue dark:text-medical-accent hover:text-medical-dark dark:hover:text-medical-light hover:underline cursor-pointer font-semibold"
                 >
                   Assign to me
                 </button>
@@ -637,11 +733,113 @@ export default function Dashboard() {
     );
   };
 
+  // Mobile equivalent of renderRow - a stacked card instead of table
+  // columns, since a 6-8 column table just forces horizontal scrolling on
+  // a phone. Carries the same data and actions as the desktop row.
+  const renderCard = (t: any, selectable: boolean) => {
+    const overdue = isOverdue(t);
+    const affected = formatEmployee(t.affected_user_id);
+    return (
+      <div
+        key={t.id}
+        className={`p-4 rounded-xl border shadow-sm ${
+          overdue ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800" : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+        } ${selectedIds.has(t.id) ? "ring-2 ring-sky-400 dark:ring-sky-600" : ""}`}
+      >
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex items-start gap-2 min-w-0">
+            {isAdminOrTech && selectable && (
+              <input
+                type="checkbox"
+                checked={selectedIds.has(t.id)}
+                onChange={() => toggleSelectOne(t.id)}
+                className="w-4 h-4 mt-1 cursor-pointer shrink-0"
+                aria-label={`Select ticket #${t.id}`}
+              />
+            )}
+            <Link href={`/tickets/${t.id}`} className="font-semibold text-medical-dark dark:text-medical-accent hover:underline">
+              #{t.id} - {t.title}
+            </Link>
+            {t.technician_note && <span title="Technician left a note">📝</span>}
+            {t.resolution && <span title="Resolution documented">✅</span>}
+          </div>
+          <span className={`shrink-0 px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-300'}`}>
+            {t.priority}
+          </span>
+        </div>
+
+        <div className="text-sm text-slate-600 dark:text-slate-300 mb-3">
+          {t.category}
+          {affected && <> · {affected.name || affected.email}</>}
+        </div>
+
+        <div className="mb-3">
+          {isAdminOrTech ? (
+            <select
+              className="bg-sky-50 dark:bg-sky-900/40 border border-sky-200 dark:border-sky-700 text-sky-800 dark:text-sky-300 text-xs font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer"
+              value={t.status}
+              onChange={(e) => handleStatusChange(t.id, e.target.value)}
+            >
+              <option value="open">OPEN</option>
+              <option value="in_progress">IN PROGRESS</option>
+              <option value="resolved">RESOLVED</option>
+            </select>
+          ) : (
+            <div className="flex flex-col gap-1 items-start">
+              <StatusStepper status={t.status} />
+              {t.status === "resolved" && (
+                <button
+                  onClick={() => handleReopen(t.id)}
+                  className="text-xs text-medical-blue dark:text-medical-accent hover:underline cursor-pointer font-semibold"
+                >
+                  This didn't fix it — Reopen
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className={`text-sm font-medium ${overdue ? "text-red-600 dark:text-red-400 font-bold flex items-center gap-2" : "text-slate-600 dark:text-slate-300"}`}>
+          {formatRelativeSla(t)}
+          {overdue && <span className="text-[10px] font-bold uppercase bg-red-600 text-white px-1.5 py-0.5 rounded">Overdue</span>}
+        </div>
+
+        {isAdminOrTech && (
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+            <select
+              className="text-xs border border-slate-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-700 dark:text-slate-100 cursor-pointer flex-1 min-w-0"
+              value={t.tech_id ?? ""}
+              onChange={(e) => handleReassign(t.id, e.target.value ? parseInt(e.target.value) : null)}
+              aria-label={`Reassign ticket #${t.id}`}
+            >
+              <option value="">Unassigned</option>
+              {allTechnicians.map(tech => (
+                <option key={tech.id} value={tech.id}>
+                  {tech.label}{tech.id === currentUserIdNum ? " (you)" : ""}
+                </option>
+              ))}
+            </select>
+            {t.tech_id === currentUserIdNum ? (
+              <span className="shrink-0 text-[10px] font-bold text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded border border-green-200 dark:border-green-700">You</span>
+            ) : (
+              <button
+                onClick={() => handleAssignToMe(t.id)}
+                className="shrink-0 text-xs text-medical-blue dark:text-medical-accent hover:underline cursor-pointer font-semibold"
+              >
+                Assign to me
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const tabButton = (tab: QuickTab, label: string, count: number) => (
     <button
       onClick={() => setActiveTab(tab)}
       className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
-        activeTab === tab ? "bg-medical-blue text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+        activeTab === tab ? "bg-medical-blue text-white" : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700"
       }`}
     >
       {label} <span className="opacity-70">({count})</span>
@@ -649,35 +847,52 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <header className="bg-medical-blue text-white p-4 shadow-md flex justify-between items-center px-10">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
+      <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold">Clinical IT Portal</h1>
           {role === "admin" && (
-            <Link href="/users" className="text-sm font-semibold hover:text-medical-light transition-colors">
-              User Management
-            </Link>
+            <>
+              <Link href="/users" className="text-sm font-semibold hover:text-medical-light transition-colors">
+                User Management
+              </Link>
+              <Link href="/settings" className="text-sm font-semibold hover:text-medical-light transition-colors">
+                Settings
+              </Link>
+            </>
           )}
         </div>
-        <button
-          onClick={() => { localStorage.removeItem("token"); localStorage.removeItem("role"); localStorage.removeItem("userId"); router.push("/login"); }}
-          className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
-        >
-          Logout
-        </button>
+        <div className="flex items-center gap-4">
+          <ThemeToggle />
+          <button
+            onClick={() => setIsWizardOpen(true)}
+            className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
+          >
+            ? Help
+          </button>
+          <button
+            onClick={async () => { await logout(); router.push("/login"); }}
+            className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
+          >
+            Logout
+          </button>
+        </div>
       </header>
 
+      <OnboardingWizard isOpen={isWizardOpen} onClose={handleCloseWizard} role={role} />
+
       <main className="max-w-7xl mx-auto p-10 w-full flex-1">
-        <div className="flex justify-between items-center mb-2">
-          <h2 className="text-3xl font-semibold text-slate-800">{dashboardTitle}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-y-2 mb-2">
+          <h2 className="text-3xl font-semibold text-slate-800 dark:text-slate-100">{dashboardTitle}</h2>
           <div className="flex items-center gap-3">
             <button
+              data-tour="export-csv"
               onClick={exportCsv}
-              className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded shadow-sm transition-colors font-semibold cursor-pointer"
+              className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 px-4 py-2 rounded shadow-sm transition-colors font-semibold cursor-pointer"
             >
               ⬇ Export CSV
             </button>
-            <Link href="/tickets/new" className="bg-medical-accent hover:bg-medical-blue text-white px-5 py-2 rounded shadow transition-colors font-semibold">
+            <Link data-tour="new-ticket-button" href="/tickets/new" className="bg-medical-accent hover:bg-medical-blue text-white px-5 py-2 rounded shadow transition-colors font-semibold">
               + New Ticket
             </Link>
           </div>
@@ -686,11 +901,11 @@ export default function Dashboard() {
         {/* Item 19: manual refresh + last-updated, so it's clear the list can
             go stale (e.g. a ticket filed via MCP) and there's a way to fix it
             without a full page reload. Auto-refreshes every 30s on its own. */}
-        <div className="flex items-center gap-2 mb-8 text-sm text-slate-500">
+        <div className="flex items-center gap-2 mb-8 text-sm text-slate-500 dark:text-slate-400">
           <button
             onClick={handleManualRefresh}
             disabled={isRefreshing}
-            className="flex items-center gap-1.5 text-medical-blue hover:text-medical-dark font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 text-medical-blue dark:text-medical-accent hover:text-medical-dark dark:hover:text-medical-light font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span className={isRefreshing ? "animate-spin" : ""}>↻</span>
             {isRefreshing ? "Refreshing..." : "Refresh"}
@@ -702,13 +917,13 @@ export default function Dashboard() {
         {overdueTickets.length > 0 && (
           <button
             onClick={() => setActiveTab("overdue")}
-            className="w-full text-left mb-6 bg-red-50 border border-red-300 rounded-xl p-4 flex items-center justify-between gap-3 hover:bg-red-100 transition-colors cursor-pointer"
+            className="w-full text-left mb-6 bg-red-50 dark:bg-red-900/30 border border-red-300 dark:border-red-800 rounded-xl p-4 flex items-center justify-between gap-3 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors cursor-pointer"
           >
-            <span className="font-semibold text-red-800">
+            <span className="font-semibold text-red-800 dark:text-red-300">
               ⚠ {overdueTickets.length} ticket{overdueTickets.length === 1 ? "" : "s"} {isAdminOrTech ? "" : "of yours "}past SLA deadline
               {isAdminOrTech ? " across the queue" : ""}
             </span>
-            <span className="text-sm text-red-700 font-semibold underline">View overdue tickets →</span>
+            <span className="text-sm text-red-700 dark:text-red-400 font-semibold underline">View overdue tickets →</span>
           </button>
         )}
 
@@ -716,46 +931,77 @@ export default function Dashboard() {
           <DashboardSkeleton />
         ) : (
         <>
-        {/* KPI Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase">Total Tickets</h3>
-            <p className="text-3xl font-bold text-slate-800 mt-2">{totalTickets}</p>
-            {renderTrend(totalTrend, "neutral")}
-          </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase">Open Tickets</h3>
-            <p className="text-3xl font-bold text-amber-500 mt-2">{openTickets}</p>
-            {renderTrend(openTrend, "down")}
-          </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase">High Priority (P1/P2)</h3>
-            <p className="text-3xl font-bold text-red-500 mt-2">{highPriorityTickets}</p>
-            {renderTrend(highPriorityTrend, "down")}
-          </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase">Resolved</h3>
-            <p className="text-3xl font-bold text-emerald-500 mt-2">{resolvedTickets}</p>
-            {renderTrend(resolvedTrend, "up")}
-          </div>
+        {/* KPI Summary Cards - technicians/admins get the full ops
+            snapshot; requesters get a smaller, personal-tracking view
+            instead (org-wide totals and priority mix mean nothing about
+            their own couple of tickets). */}
+        <div data-tour="kpi-cards" className={`grid grid-cols-1 gap-6 mb-8 ${isAdminOrTech ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+          {isAdminOrTech ? (
+            <>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Total Tickets</h3>
+                <p className="text-3xl font-bold text-slate-800 dark:text-slate-100 mt-2">{totalTickets}</p>
+                {renderTrend(totalTrend, "neutral")}
+              </div>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Open Tickets</h3>
+                <p className="text-3xl font-bold text-amber-500 dark:text-amber-400 mt-2">{openTickets}</p>
+                {renderTrend(openTrend, "down")}
+              </div>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">High Priority (P1/P2)</h3>
+                <p className="text-3xl font-bold text-red-500 dark:text-red-400 mt-2">{highPriorityTickets}</p>
+                {renderTrend(highPriorityTrend, "down")}
+              </div>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Resolved</h3>
+                <p className="text-3xl font-bold text-emerald-500 dark:text-emerald-400 mt-2">{resolvedTickets}</p>
+                {renderTrend(resolvedTrend, "up")}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">My Open Tickets</h3>
+                <p className="text-3xl font-bold text-amber-500 dark:text-amber-400 mt-2">{myActiveTickets}</p>
+                {renderTrend(openTrend, "down")}
+              </div>
+              <div className={`bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border ${overdueTickets.length > 0 ? "border-red-300 dark:border-red-800" : "border-slate-200 dark:border-slate-700"}`}>
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Overdue</h3>
+                <p className={`text-3xl font-bold mt-2 ${overdueTickets.length > 0 ? "text-red-500 dark:text-red-400" : "text-slate-800 dark:text-slate-100"}`}>{overdueTickets.length}</p>
+                <span className="text-xs text-slate-400 dark:text-slate-500 mt-1 block">
+                  {overdueTickets.length > 0 ? "Past their SLA deadline" : "Nothing past deadline"}
+                </span>
+              </div>
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Resolved</h3>
+                <p className="text-3xl font-bold text-emerald-500 dark:text-emerald-400 mt-2">{resolvedTickets}</p>
+                {avgResolutionDays != null ? (
+                  <span className="text-xs text-slate-400 dark:text-slate-500 mt-1 block">
+                    Avg. {avgResolutionDays < 1 ? "under a day" : `${avgResolutionDays.toFixed(1)} days`} to resolve
+                  </span>
+                ) : renderTrend(resolvedTrend, "up")}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Technician Workload (item 14) */}
         {isAdminOrTech && workload.length > 0 && (
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
-            <h3 className="text-lg font-semibold text-slate-800 mb-4">Technician Workload</h3>
+          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 mb-8">
+            <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Technician Workload</h3>
             <div className="flex flex-wrap gap-4">
               {workload.map(tech => {
                 const overloaded = tech.count >= OVERLOAD_THRESHOLD;
                 return (
                   <div
                     key={tech.id}
-                    className={`flex-1 min-w-[160px] p-4 rounded-lg border ${overloaded ? "bg-red-50 border-red-300" : "bg-slate-50 border-slate-200"}`}
+                    className={`flex-1 min-w-[160px] p-4 rounded-lg border ${overloaded ? "bg-red-50 dark:bg-red-900/30 border-red-300 dark:border-red-800" : "bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600"}`}
                   >
-                    <div className="text-sm font-semibold text-slate-700 truncate" title={tech.label}>{tech.label}</div>
-                    <div className={`text-2xl font-bold mt-1 ${overloaded ? "text-red-600" : "text-slate-800"}`}>{tech.count}</div>
-                    <div className="text-xs text-slate-500">active ticket{tech.count === 1 ? "" : "s"}</div>
-                    {overloaded && <div className="text-[10px] font-bold uppercase text-red-600 mt-1">⚠ Overloaded</div>}
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate" title={tech.label}>{tech.label}</div>
+                    <div className={`text-2xl font-bold mt-1 ${overloaded ? "text-red-600 dark:text-red-400" : "text-slate-800 dark:text-slate-100"}`}>{tech.count}</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">active ticket{tech.count === 1 ? "" : "s"}</div>
+                    {overloaded && <div className="text-[10px] font-bold uppercase text-red-600 dark:text-red-400 mt-1">⚠ Overloaded</div>}
                   </div>
                 );
               })}
@@ -763,11 +1009,13 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Charts Section */}
-        {tickets.length > 0 && (
+        {/* Charts Section - org-wide breakdowns by technician/category
+            aren't meaningful against a requester's own handful of tickets,
+            so these are staff-only. */}
+        {isAdminOrTech && tickets.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">Tickets by Status</h3>
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+              <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Status</h3>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
@@ -784,37 +1032,43 @@ export default function Dashboard() {
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <RechartsTooltip />
-                    <Legend />
+                    <RechartsTooltip contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined} />
+                    <Legend wrapperStyle={resolvedTheme === "dark" ? { color: "#cbd5e1" } : undefined} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">Tickets by Category</h3>
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+              <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Category</h3>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={categoryData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                    <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
-                    <RechartsTooltip cursor={{fill: '#f1f5f9'}} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                    <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                    <RechartsTooltip
+                      cursor={{ fill: cursorFill }}
+                      contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined}
+                    />
                     <Bar dataKey="count" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">Tickets by Technician</h3>
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+              <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Technician</h3>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={techData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                    <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
-                    <RechartsTooltip cursor={{fill: '#f1f5f9'}} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                    <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                    <RechartsTooltip
+                      cursor={{ fill: cursorFill }}
+                      contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined}
+                    />
                     <Bar dataKey="count" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -833,40 +1087,40 @@ export default function Dashboard() {
         </div>
 
         {/* Search + column filters */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-wrap items-center gap-3">
+        <div data-tour="search-filters" className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 mb-4 flex flex-wrap items-center gap-3">
           <input
             type="text"
             placeholder="Search title, description, requester, or affected employee..."
-            className="flex-1 min-w-[240px] px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-accent"
+            className="flex-1 min-w-[240px] px-4 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-medical-accent"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
-          <select className="px-3 py-2 border border-slate-300 rounded-lg text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <select className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="">All Statuses</option>
             <option value="open">Open</option>
             <option value="in_progress">In Progress</option>
             <option value="resolved">Resolved</option>
           </select>
-          <select className="px-3 py-2 border border-slate-300 rounded-lg text-sm" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
+          <select className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-sm" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
             <option value="">All Priorities</option>
             <option value="P1">P1</option>
             <option value="P2">P2</option>
             <option value="P3">P3</option>
             <option value="P4">P4</option>
           </select>
-          <select className="px-3 py-2 border border-slate-300 rounded-lg text-sm" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+          <select className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-sm" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
             <option value="">All Categories</option>
             {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           {isAdminOrTech && (
-            <select className="px-3 py-2 border border-slate-300 rounded-lg text-sm" value={technicianFilter} onChange={(e) => setTechnicianFilter(e.target.value)}>
+            <select className="px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-sm" value={technicianFilter} onChange={(e) => setTechnicianFilter(e.target.value)}>
               <option value="">All Technicians</option>
               <option value="unassigned">Unassigned</option>
               {technicianOptions.map(t => <option key={t.id} value={String(t.id)}>{t.label}</option>)}
             </select>
           )}
           {hasActiveFilters && (
-            <button onClick={resetFilters} className="text-sm text-medical-blue hover:text-medical-dark font-semibold cursor-pointer">
+            <button onClick={resetFilters} className="text-sm text-medical-blue dark:text-medical-accent hover:text-medical-dark dark:hover:text-medical-light font-semibold cursor-pointer">
               Reset filters
             </button>
           )}
@@ -874,11 +1128,11 @@ export default function Dashboard() {
 
         {/* Bulk action toolbar (item 10) - appears once at least one ticket is selected */}
         {isAdminOrTech && selectedIds.size > 0 && (
-          <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 mb-4 flex flex-wrap items-center gap-3">
-            <span className="text-sm font-bold text-sky-900">{selectedIds.size} selected</span>
+          <div className="bg-sky-50 dark:bg-sky-900/30 border border-sky-200 dark:border-sky-800 rounded-xl p-4 mb-4 flex flex-wrap items-center gap-3">
+            <span className="text-sm font-bold text-sky-900 dark:text-sky-200">{selectedIds.size} selected</span>
 
             <select
-              className="text-sm border border-slate-300 rounded px-2 py-1.5 bg-white"
+              className="text-sm border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 bg-white dark:bg-slate-700 dark:text-slate-100"
               value={bulkStatusValue}
               onChange={(e) => setBulkStatusValue(e.target.value)}
             >
@@ -896,7 +1150,7 @@ export default function Dashboard() {
             </button>
 
             <select
-              className="text-sm border border-slate-300 rounded px-2 py-1.5 bg-white"
+              className="text-sm border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 bg-white dark:bg-slate-700 dark:text-slate-100"
               value={bulkTechValue}
               onChange={(e) => setBulkTechValue(e.target.value)}
             >
@@ -912,76 +1166,101 @@ export default function Dashboard() {
               Apply
             </button>
 
-            <button onClick={clearSelection} className="text-sm text-slate-500 hover:text-slate-700 cursor-pointer">
+            <button onClick={clearSelection} className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer">
               Clear selection
             </button>
 
-            <span className="text-xs text-slate-400 ml-auto">
-              Shortcuts: <kbd className="px-1 py-0.5 bg-white border border-slate-300 rounded">R</kbd> resolve selected · <kbd className="px-1 py-0.5 bg-white border border-slate-300 rounded">A</kbd> assign to me · <kbd className="px-1 py-0.5 bg-white border border-slate-300 rounded">Esc</kbd> clear
+            <span className="text-xs text-slate-400 dark:text-slate-500 ml-auto">
+              Shortcuts: <kbd className="px-1 py-0.5 bg-white dark:bg-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 rounded">R</kbd> resolve selected · <kbd className="px-1 py-0.5 bg-white dark:bg-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 rounded">A</kbd> assign to me · <kbd className="px-1 py-0.5 bg-white dark:bg-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 rounded">Esc</kbd> clear
             </span>
           </div>
         )}
 
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[900px]">
-            <thead>
-              <tr className="bg-slate-100 text-slate-600 border-b border-slate-200">
-                {isAdminOrTech && (
-                  <th className="p-4 font-semibold">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={toggleSelectAllVisible}
-                      className="w-4 h-4 cursor-pointer"
-                      aria-label="Select all visible tickets"
-                    />
-                  </th>
-                )}
-                <th className="p-4 font-semibold">Ticket</th>
-                <th className="p-4 font-semibold">Affected Employee</th>
-                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("category")}>Category{sortArrow("category")}</th>
-                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("status")}>Status{sortArrow("status")}</th>
-                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("priority")}>Priority{sortArrow("priority")}</th>
-                <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("sla")}>Resolution SLA (TTR){sortArrow("sla")}</th>
-                {isAdminOrTech && <th className="p-4 font-semibold text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedActive.length === 0 ? (
-                <tr>
-                  <td colSpan={columnCount} className="p-10 text-center text-slate-500">
-                    {tickets.length === 0 ? "No tickets found. Create one to get started!" : "No active tickets match the current filters."}
-                  </td>
+        {/* Active tickets - stacked cards below the md breakpoint (a 6-8
+            column table just forces horizontal scrolling on a phone), the
+            full table at md and up. Wrapped in one data-tour target so the
+            spotlight tour finds the same element regardless of viewport. */}
+        <div data-tour="ticket-table">
+          <div className="md:hidden space-y-3">
+            {sortedActive.length === 0 ? (
+              <div className="p-8 text-center text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                {tickets.length === 0 ? "No tickets found. Create one to get started!" : "No active tickets match the current filters."}
+              </div>
+            ) : (
+              sortedActive.map(t => renderCard(t, true))
+            )}
+          </div>
+
+          <div className="hidden md:block bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[900px]">
+              <thead>
+                <tr className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-600">
+                  {isAdminOrTech && (
+                    <th data-tour="bulk-select-header" className="p-4 font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={toggleSelectAllVisible}
+                        className="w-4 h-4 cursor-pointer"
+                        aria-label="Select all visible tickets"
+                      />
+                    </th>
+                  )}
+                  <th className="p-4 font-semibold">Ticket</th>
+                  <th className="p-4 font-semibold">Affected Employee</th>
+                  <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("category")}>Category{sortArrow("category")}</th>
+                  <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("status")}>Status{sortArrow("status")}</th>
+                  <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("priority")}>Priority{sortArrow("priority")}</th>
+                  <th className="p-4 font-semibold cursor-pointer select-none" onClick={() => toggleSort("sla")}>Resolution SLA (TTR){sortArrow("sla")}</th>
+                  {isAdminOrTech && <th className="p-4 font-semibold text-right">Actions</th>}
                 </tr>
-              ) : (
-                sortedActive.map(t => renderRow(t, true))
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedActive.length === 0 ? (
+                  <tr>
+                    <td colSpan={columnCount} className="p-10 text-center text-slate-500 dark:text-slate-400">
+                      {tickets.length === 0 ? "No tickets found. Create one to get started!" : "No active tickets match the current filters."}
+                    </td>
+                  </tr>
+                ) : (
+                  sortedActive.map(t => renderRow(t, true))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Resolved tickets - collapsed by default so they don't crowd the active work queue */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mt-6">
           <button
             onClick={() => setResolvedExpanded(v => !v)}
-            className="w-full flex justify-between items-center p-4 text-left cursor-pointer hover:bg-slate-50"
+            className="w-full flex justify-between items-center p-4 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"
           >
-            <span className="font-semibold text-slate-700">Resolved Tickets ({sortedResolved.length})</span>
-            <span className="text-slate-400">{resolvedExpanded ? "▲ Hide" : "▼ Show"}</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-200">Resolved Tickets ({sortedResolved.length})</span>
+            <span className="text-slate-400 dark:text-slate-500">{resolvedExpanded ? "▲ Hide" : "▼ Show"}</span>
           </button>
           {resolvedExpanded && (
-            <div className="overflow-x-auto border-t border-slate-200">
-              <table className="w-full text-left border-collapse min-w-[900px]">
-                <tbody>
-                  {sortedResolved.length === 0 ? (
-                    <tr>
-                      <td colSpan={columnCount} className="p-10 text-center text-slate-500">No resolved tickets match the current filters.</td>
-                    </tr>
-                  ) : (
-                    sortedResolved.map(t => renderRow(t, false))
-                  )}
-                </tbody>
-              </table>
+            <div className="border-t border-slate-200 dark:border-slate-700">
+              <div className="md:hidden p-4 space-y-3">
+                {sortedResolved.length === 0 ? (
+                  <div className="p-6 text-center text-slate-500 dark:text-slate-400">No resolved tickets match the current filters.</div>
+                ) : (
+                  sortedResolved.map(t => renderCard(t, false))
+                )}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[900px]">
+                  <tbody>
+                    {sortedResolved.length === 0 ? (
+                      <tr>
+                        <td colSpan={columnCount} className="p-10 text-center text-slate-500 dark:text-slate-400">No resolved tickets match the current filters.</td>
+                      </tr>
+                    ) : (
+                      sortedResolved.map(t => renderRow(t, false))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

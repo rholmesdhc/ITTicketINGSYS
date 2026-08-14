@@ -2,13 +2,16 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL, isUnauthorized } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized, logout } from "@/lib/api";
+import OnboardingWizard from "@/components/OnboardingWizard";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function UserManagement() {
   const router = useRouter();
   const [users, setUsers] = useState([]);
   const [role, setRole] = useState<string | null>(null);
-  
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+
   // Create user state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
@@ -201,8 +204,8 @@ export default function UserManagement() {
   if (role !== "admin") return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <header className="bg-medical-blue text-white p-4 shadow-md flex justify-between items-center px-10">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
+      <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
         <div className="flex items-center gap-6">
           <h1 className="text-xl font-bold">Clinical IT Portal</h1>
           <Link href="/dashboard" className="text-sm font-semibold hover:text-medical-light transition-colors">
@@ -211,18 +214,32 @@ export default function UserManagement() {
           <Link href="/users" className="text-sm font-semibold text-medical-light transition-colors">
             User Management
           </Link>
+          <Link href="/settings" className="text-sm font-semibold hover:text-medical-light transition-colors">
+            Settings
+          </Link>
         </div>
-        <button 
-          onClick={() => { localStorage.removeItem("token"); localStorage.removeItem("role"); localStorage.removeItem("userId"); router.push("/login"); }}
-          className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
-        >
-          Logout
-        </button>
+        <div className="flex items-center gap-4">
+          <ThemeToggle />
+          <button
+            onClick={() => setIsWizardOpen(true)}
+            className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
+          >
+            ? Help
+          </button>
+          <button
+            onClick={async () => { await logout(); router.push("/login"); }}
+            className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
+          >
+            Logout
+          </button>
+        </div>
       </header>
-      
+
+      <OnboardingWizard isOpen={isWizardOpen} onClose={() => setIsWizardOpen(false)} role={role} />
+
       <main className="max-w-7xl mx-auto p-10 w-full flex-1">
         <div className="flex justify-between items-center mb-8">
-          <h2 className="text-3xl font-semibold text-slate-800">User Management</h2>
+          <h2 className="text-3xl font-semibold text-slate-800 dark:text-slate-100">User Management</h2>
           <button 
             onClick={() => closeModal()}
             className="bg-medical-accent hover:bg-medical-blue text-white px-5 py-2 rounded shadow transition-colors font-semibold cursor-pointer"
@@ -231,14 +248,14 @@ export default function UserManagement() {
           </button>
         </div>
         
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[800px]">
             <thead>
-              <tr className="bg-slate-100 text-slate-600 border-b border-slate-200">
+              <tr className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-600">
                 <th className="p-4 font-semibold">Username</th>
                 <th className="p-4 font-semibold">Name</th>
                 <th className="p-4 font-semibold">Email</th>
-                <th className="p-4 font-semibold">Primary Clinic Site</th>
+                <th data-tour="primary-clinic-site-column" className="p-4 font-semibold">Primary Clinic Site</th>
                 <th className="p-4 font-semibold">Role</th>
                 <th className="p-4 font-semibold">Actions</th>
               </tr>
@@ -247,17 +264,17 @@ export default function UserManagement() {
               {users.map((u: any) => {
                 const site = clinicSites.find((s: any) => s.id === u.clinic_site_id);
                 return (
-                  <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="p-4 font-medium text-slate-800">{u.username}</td>
-                    <td className="p-4 text-slate-800">{u.first_name} {u.mi ? u.mi + '.' : ''} {u.last_name}</td>
-                    <td className="p-4 text-slate-600">{u.email}</td>
-                    <td className="p-4 text-slate-600">{site ? (site as any).name : <span className="text-slate-400 italic">Mobile / not set</span>}</td>
+                  <tr key={u.id} className="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700">
+                    <td className="p-4 font-medium text-slate-800 dark:text-slate-100">{u.username}</td>
+                    <td className="p-4 text-slate-800 dark:text-slate-100">{u.first_name} {u.mi ? u.mi + '.' : ''} {u.last_name}</td>
+                    <td className="p-4 text-slate-600 dark:text-slate-300">{u.email}</td>
+                    <td className="p-4 text-slate-600 dark:text-slate-300">{site ? (site as any).name : <span className="text-slate-400 dark:text-slate-500 italic">Mobile / not set</span>}</td>
                     <td className="p-4">
-                      <select 
-                        className={`border border-slate-300 text-sm font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer ${
-                          u.role === 'admin' ? 'bg-purple-50 text-purple-800 border-purple-200' :
-                          u.role === 'technician' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                          'bg-slate-50 text-slate-700'
+                      <select
+                        className={`border text-sm font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer ${
+                          u.role === 'admin' ? 'bg-purple-50 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-700' :
+                          u.role === 'technician' ? 'bg-amber-50 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-700' :
+                          'bg-slate-50 dark:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-600'
                         }`}
                         value={u.role}
                         onChange={(e) => handleRoleChange(u.id, e.target.value)}
@@ -268,15 +285,15 @@ export default function UserManagement() {
                       </select>
                     </td>
                     <td className="p-4">
-                      <button 
+                      <button
                         onClick={() => openEditModal(u)}
-                        className="text-medical-blue hover:text-medical-dark font-semibold text-sm mr-4"
+                        className="text-medical-blue dark:text-medical-accent hover:text-medical-dark dark:hover:text-medical-light font-semibold text-sm mr-4"
                       >
                         Edit
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDeleteUser(u.id)}
-                        className="text-red-500 hover:text-red-700 font-semibold text-sm"
+                        className="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-semibold text-sm"
                       >
                         Delete
                       </button>
@@ -286,7 +303,7 @@ export default function UserManagement() {
               })}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-10 text-center text-slate-500">No users found.</td>
+                  <td colSpan={6} className="p-10 text-center text-slate-500 dark:text-slate-400">No users found.</td>
                 </tr>
               )}
             </tbody>
@@ -297,19 +314,19 @@ export default function UserManagement() {
       {/* Create / Edit User Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4 border-b pb-3">
-              <h3 className="text-xl font-bold text-slate-800">{editingUserId ? "Edit User" : "Create New User"}</h3>
-              <button 
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4 border-b dark:border-slate-700 pb-3">
+              <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100">{editingUserId ? "Edit User" : "Create New User"}</h3>
+              <button
                 onClick={() => closeModal()}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer text-2xl font-bold"
+                className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer text-2xl font-bold"
               >
                 &times;
               </button>
             </div>
-            
+
             {error && (
-              <div className="mb-4 p-3 bg-red-50 text-red-600 border border-red-200 rounded text-sm">
+              <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded text-sm">
                 {error}
               </div>
             )}
@@ -317,107 +334,107 @@ export default function UserManagement() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">First Name</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">First Name</label>
                   <input 
                     type="text" 
                     value={newFirstName}
                     onChange={(e) => setNewFirstName(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
+                    className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Last Name</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Last Name</label>
                   <input 
                     type="text" 
                     value={newLastName}
                     onChange={(e) => setNewLastName(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
+                    className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Middle Initial (Optional)</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Middle Initial (Optional)</label>
                   <input 
                     type="text" 
                     value={newMi}
                     onChange={(e) => setNewMi(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
+                    className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                     maxLength={1}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Email</label>
                   <input 
                     type="email" 
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
+                    className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number (Optional)</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Phone Number (Optional)</label>
                   <input 
                     type="tel" 
                     value={newPhoneNumber}
                     onChange={(e) => setNewPhoneNumber(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
+                    className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Primary Clinic Site</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Primary Clinic Site</label>
                   <select
                     value={newClinicSiteId}
                     onChange={(e) => setNewClinicSiteId(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
+                    className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                   >
                     <option value="">Mobile / no fixed site</option>
                     {clinicSites.map((site: any) => (
                       <option key={site.id} value={site.id}>{site.name}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-slate-500 mt-1">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     Most employees are assigned one home site. Leave unset for staff who work
                     across multiple sites day-to-day - individual tickets can still record which
                     site the issue actually happened at.
                   </p>
                 </div>
-                
+
                 {/* Account Credentials */}
-                <div className="md:col-span-2 pt-4 border-t mt-2">
-                  <h4 className="text-md font-semibold text-slate-700 mb-3">Account Credentials</h4>
+                <div className="md:col-span-2 pt-4 border-t dark:border-slate-700 mt-2">
+                  <h4 className="text-md font-semibold text-slate-700 dark:text-slate-200 mb-3">Account Credentials</h4>
                 </div>
-                
+
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
-                  <input 
-                    type="text" 
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Username</label>
+                  <input
+                    type="text"
                     value={newUsername}
                     onChange={(e) => setNewUsername(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue disabled:bg-slate-100 disabled:text-slate-500"
+                    className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:text-slate-500"
                     required
                     disabled={!!editingUserId}
                   />
                 </div>
                 {!editingUserId && (
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Password</label>
                     <input 
                       type="password" 
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
+                      className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                       required
                     />
                   </div>
                 )}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Role</label>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">Role</label>
                   <select 
                     value={newRole}
                     onChange={(e) => setNewRole(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
+                    className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                   >
                     <option value="requester">Requester</option>
                     <option value="technician">Technician</option>
@@ -426,11 +443,11 @@ export default function UserManagement() {
                 </div>
               </div>
               
-              <div className="pt-6 flex gap-3 justify-end border-t mt-4">
-                <button 
+              <div className="pt-6 flex gap-3 justify-end border-t dark:border-slate-700 mt-4">
+                <button
                   type="button"
                   onClick={() => closeModal()}
-                  className="px-4 py-2 border border-slate-300 rounded text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer font-semibold"
+                  className="px-4 py-2 border border-slate-300 dark:border-slate-600 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer font-semibold"
                 >
                   Cancel
                 </button>
