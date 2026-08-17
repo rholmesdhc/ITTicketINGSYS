@@ -1,0 +1,38 @@
+# systemd unit for the UAT VM's SSH local-forward to Jack's ticket-priority
+# classifier VM (see backend/triage.py). Direct VM -> 10.4.2.10:8080 is
+# silently blocked by the office network (confirmed via port-level testing
+# from this VM directly - same restriction the dev PC hit, see
+# mcp-server/jack-callback-tunnel-watchdog.ps1 for that side of the story).
+#
+# Bound to the docker bridge gateway (172.18.0.1), not 127.0.0.1 - the
+# backend runs inside a container with its own network namespace, so a
+# loopback-only bind on the host wouldn't be reachable from it. 172.18.0.1
+# is this compose project's bridge gateway as of 2026-08-17
+# (docker network inspect itticketingsys_default) - if the network ever
+# gets recreated with a different subnet, this binding and
+# TRIAGE_API_URL in /opt/it-ticketing/.env.uat both need updating to match.
+#
+# Deploy (one-time, not automated by deploy-uat.yml):
+#   1. Generate a dedicated key on the VM: ssh-keygen -t ed25519 -f ~/.ssh/jack_tunnel_key -N ''
+#   2. Get its .pub added to rholmes@10.4.2.10's ~/.ssh/authorized_keys
+#   3. sudo cp jack-tunnel-uat.service /etc/systemd/system/jack-tunnel.service
+#   4. sudo systemctl daemon-reload && sudo systemctl enable --now jack-tunnel.service
+#
+# Restart=always / RestartSec=5 mirrors the Windows watchdog script's own
+# retry loop - keeps this alive across network blips/VM reboots without
+# needing anyone to notice and restart it manually.
+
+[Unit]
+Description=SSH local forward to Jack ticket-priority classifier VM (for the ticketing backend container)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -i /home/ubuntu/.ssh/jack_tunnel_key -L 172.18.0.1:18080:127.0.0.1:8080 rholmes@10.4.2.10
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
