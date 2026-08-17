@@ -25,6 +25,10 @@ out/
 *.log
 .DS_Store
 
+# Claude Code local project settings - a per-session/per-developer tool
+# permission allowlist, not shared team config.
+.claude/
+
 # Contains real employee PII / password hashes from local seeding runs -
 # must never be committed.
 backend/seed_log.txt
