@@ -74,7 +74,15 @@ jobs:
           # them to 127.0.0.1 (this check runs on the same box Caddy is
           # on) so it works instantly regardless of external DNS
           # propagation timing.
-          set -a; source /opt/it-ticketing/.env.uat; set +a
+          # Extract just the two vars needed, rather than `source`-ing the
+          # whole file: .env.uat has unquoted values with spaces (e.g.
+          # M365_FROM_NAME) which are valid for Docker's env-file parser
+          # but not as literal bash (source blew up with "Health: command
+          # not found", exit 127, treating `Health Center IT Helpdesk` as
+          # a command). This also avoids loading unrelated secrets into
+          # this step's environment.
+          FRONTEND_HOST=$(grep -oP '^FRONTEND_HOST=\K.*' /opt/it-ticketing/.env.uat)
+          BACKEND_HOST=$(grep -oP '^BACKEND_HOST=\K.*' /opt/it-ticketing/.env.uat)
           for i in $(seq 1 15); do
             curl --fail -sk --resolve "${BACKEND_HOST}:443:127.0.0.1" "https://${BACKEND_HOST}/docs" > /dev/null && backend_ok=1 && break
             sleep 2
