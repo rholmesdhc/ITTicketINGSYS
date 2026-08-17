@@ -83,6 +83,24 @@ function StatusStepper({ status }: { status: string }) {
   );
 }
 
+// Lightweight collapse toggle for a dashboard group - deliberately just a
+// header row, not a bordered card wrapper like the Resolved Tickets section
+// below, since the KPI/chart cards it sits above are already individually
+// carded and a card-around-cards would look nested/heavy.
+function CollapsibleSectionHeader({ title, expanded, onToggle }: { title: string; expanded: boolean; onToggle: () => void }) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">{title}</h3>
+      <button
+        onClick={onToggle}
+        className="text-xs font-semibold text-medical-blue dark:text-medical-accent hover:text-medical-dark dark:hover:text-medical-light cursor-pointer"
+      >
+        {expanded ? "▲ Collapse" : "▼ Expand"}
+      </button>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const { resolvedTheme } = useTheme();
@@ -103,6 +121,10 @@ export default function Dashboard() {
   const [sortField, setSortField] = useState<SortField>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [resolvedExpanded, setResolvedExpanded] = useState(false);
+  // Collapsible dashboard groups (tester-requested) - both default open so
+  // nobody's existing view changes until they actually collapse something.
+  const [kpiExpanded, setKpiExpanded] = useState(true);
+  const [workloadChartsExpanded, setWorkloadChartsExpanded] = useState(true);
 
   // Bulk / fast actions state
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -949,8 +971,13 @@ export default function Dashboard() {
         {/* KPI Summary Cards - technicians/admins get the full ops
             snapshot; requesters get a smaller, personal-tracking view
             instead (org-wide totals and priority mix mean nothing about
-            their own couple of tickets). */}
-        <div data-tour="kpi-cards" className={`grid grid-cols-1 gap-6 mb-8 ${isAdminOrTech ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+            their own couple of tickets). Collapsible as a group
+            (tester-requested) - individually collapsing each card would be
+            more fiddly than useful for 3-4 small numbers. */}
+        <div className="mb-8">
+        <CollapsibleSectionHeader title="Key Metrics" expanded={kpiExpanded} onToggle={() => setKpiExpanded(v => !v)} />
+        {kpiExpanded && (
+        <div data-tour="kpi-cards" className={`grid grid-cols-1 gap-6 ${isAdminOrTech ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
           {isAdminOrTech ? (
             <>
               <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
@@ -1000,95 +1027,107 @@ export default function Dashboard() {
             </>
           )}
         </div>
-
-        {/* Technician Workload (item 14) */}
-        {isAdminOrTech && workload.length > 0 && (
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 mb-8">
-            <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Technician Workload</h3>
-            <div className="flex flex-wrap gap-4">
-              {workload.map(tech => {
-                const overloaded = tech.count >= OVERLOAD_THRESHOLD;
-                return (
-                  <div
-                    key={tech.id}
-                    className={`flex-1 min-w-[160px] p-4 rounded-lg border ${overloaded ? "bg-red-50 dark:bg-red-900/30 border-red-300 dark:border-red-800" : "bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600"}`}
-                  >
-                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate" title={tech.label}>{tech.label}</div>
-                    <div className={`text-2xl font-bold mt-1 ${overloaded ? "text-red-600 dark:text-red-400" : "text-slate-800 dark:text-slate-100"}`}>{tech.count}</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">active ticket{tech.count === 1 ? "" : "s"}</div>
-                    {overloaded && <div className="text-[10px] font-bold uppercase text-red-600 dark:text-red-400 mt-1">⚠ Overloaded</div>}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
         )}
+        </div>
 
-        {/* Charts Section - org-wide breakdowns by technician/category
-            aren't meaningful against a requester's own handful of tickets,
-            so these are staff-only. */}
-        {isAdminOrTech && tickets.length > 0 && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-              <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Status</h3>
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={statusData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={80}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      {statusData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined} />
-                    <Legend wrapperStyle={resolvedTheme === "dark" ? { color: "#cbd5e1" } : undefined} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+        {/* Technician Workload (item 14) + charts, grouped under one
+            collapse toggle (tester-requested) - both are staff-only
+            org-wide breakdowns that don't mean much against a requester's
+            own handful of tickets, so the whole group stays gated on
+            isAdminOrTech same as before. */}
+        {isAdminOrTech && (workload.length > 0 || tickets.length > 0) && (
+          <div className="mb-8">
+            <CollapsibleSectionHeader title="Workload & Analytics" expanded={workloadChartsExpanded} onToggle={() => setWorkloadChartsExpanded(v => !v)} />
+            {workloadChartsExpanded && (
+              <>
+              {workload.length > 0 && (
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 mb-6">
+                  <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Technician Workload</h3>
+                  <div className="flex flex-wrap gap-4">
+                    {workload.map(tech => {
+                      const overloaded = tech.count >= OVERLOAD_THRESHOLD;
+                      return (
+                        <div
+                          key={tech.id}
+                          className={`flex-1 min-w-[160px] p-4 rounded-lg border ${overloaded ? "bg-red-50 dark:bg-red-900/30 border-red-300 dark:border-red-800" : "bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600"}`}
+                        >
+                          <div className="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate" title={tech.label}>{tech.label}</div>
+                          <div className={`text-2xl font-bold mt-1 ${overloaded ? "text-red-600 dark:text-red-400" : "text-slate-800 dark:text-slate-100"}`}>{tech.count}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">active ticket{tech.count === 1 ? "" : "s"}</div>
+                          {overloaded && <div className="text-[10px] font-bold uppercase text-red-600 dark:text-red-400 mt-1">⚠ Overloaded</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-              <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Category</h3>
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={categoryData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
-                    <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
-                    <RechartsTooltip
-                      cursor={{ fill: cursorFill }}
-                      contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined}
-                    />
-                    <Bar dataKey="count" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+              {tickets.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Status</h3>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={statusData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={80}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            {statusData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <RechartsTooltip contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined} />
+                          <Legend wrapperStyle={resolvedTheme === "dark" ? { color: "#cbd5e1" } : undefined} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
 
-            <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-              <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Technician</h3>
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={techData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
-                    <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
-                    <RechartsTooltip
-                      cursor={{ fill: cursorFill }}
-                      contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined}
-                    />
-                    <Bar dataKey="count" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+                  <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Category</h3>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={categoryData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
+                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                          <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                          <RechartsTooltip
+                            cursor={{ fill: cursorFill }}
+                            contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined}
+                          />
+                          <Bar dataKey="count" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Technician</h3>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={techData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
+                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                          <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                          <RechartsTooltip
+                            cursor={{ fill: cursorFill }}
+                            contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined}
+                          />
+                          <Bar dataKey="count" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+              )}
+              </>
+            )}
           </div>
         )}
 
