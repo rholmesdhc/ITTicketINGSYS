@@ -168,11 +168,8 @@ export default function Settings() {
           <Link href="/dashboard" className="text-sm font-semibold hover:text-medical-light transition-colors">
             Dashboard
           </Link>
-          <Link href="/users" className="text-sm font-semibold hover:text-medical-light transition-colors">
-            User Management
-          </Link>
           <Link href="/settings" className="text-sm font-semibold text-medical-light transition-colors">
-            Settings
+            Admin Settings
           </Link>
         </div>
         <div className="flex items-center gap-4">
@@ -187,7 +184,22 @@ export default function Settings() {
       </header>
 
       <main className="max-w-3xl mx-auto p-10 w-full flex-1">
-        <h2 className="text-3xl font-semibold text-slate-800 dark:text-slate-100 mb-8">Settings</h2>
+        <h2 className="text-3xl font-semibold text-slate-800 dark:text-slate-100 mb-8">Admin Settings</h2>
+
+        {loaded && (
+          <Link
+            href="/users"
+            className="block bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-8 mb-6 hover:border-medical-blue dark:hover:border-medical-accent transition-colors"
+          >
+            <div className="flex items-center justify-between gap-6">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">User Management</h3>
+                <p className="text-slate-600 dark:text-slate-300">Create accounts, change roles, and set primary clinic sites.</p>
+              </div>
+              <span className="text-medical-blue dark:text-medical-accent font-semibold shrink-0">Manage users →</span>
+            </div>
+          </Link>
+        )}
 
         {loaded && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-8">

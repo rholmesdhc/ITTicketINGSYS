@@ -100,7 +100,7 @@ const ADMIN_STEPS: Step[] = [
     icon: "👥",
     title: "Managing Users",
     targetId: "primary-clinic-site-column",
-    body: "From User Management, create accounts, change roles, and set each employee's Primary Clinic Site - their usual home base. Leave it unset for staff who float between sites; individual tickets can still record where an issue actually happened.",
+    body: "From Admin Settings → User Management, create accounts, change roles, and set each employee's Primary Clinic Site - their usual home base. Leave it unset for staff who float between sites; individual tickets can still record where an issue actually happened.",
   },
 ];
 
