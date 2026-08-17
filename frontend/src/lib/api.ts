@@ -24,6 +24,24 @@ export async function logout() {
 }
 
 /**
+ * Best-effort save of a per-user UI preference (theme, dashboard collapse
+ * state) - shallow-merged server-side (see PATCH /users/me/preferences),
+ * so callers only need to pass the key(s) they're actually changing.
+ * Fire-and-forget: a save failure shouldn't disrupt the UI the way a 401
+ * redirect or an alert would - localStorage/React state already reflect
+ * the change immediately regardless of whether this succeeds.
+ */
+export function updateUserPreferences(prefs: Record<string, unknown>) {
+  const token = localStorage.getItem("token");
+  if (!token) return;
+  fetch(`${API_BASE_URL}/users/me/preferences`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify({ preferences: prefs }),
+  }).catch(() => {});
+}
+
+/**
  * A 401 means the JWT expired or is invalid (access tokens last 60 minutes
  * - see backend/auth.py). Without this, pages were silently rendering
  * empty/stale data on every failed fetch with no indication why. Call this

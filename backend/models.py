@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Enum, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Enum, ForeignKey, DateTime, Boolean, JSON
 from sqlalchemy.orm import relationship
 import enum
 from datetime import datetime
@@ -36,11 +36,23 @@ class AppSettings(Base):
 
 class ClinicSite(Base):
     __tablename__ = "clinic_sites"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
 
     users = relationship("User", back_populates="clinic_site")
+
+class Category(Base):
+    # Admin-managed list of valid ticket categories (see GET/POST/PATCH/
+    # DELETE /categories in main.py). Deliberately NOT a foreign key target
+    # for Ticket.category - a ticket's category is a point-in-time copy of
+    # the name at creation, same treatment as technician_note/resolution,
+    # so renaming or deleting a category here never touches existing
+    # tickets that used the old name.
+    __tablename__ = "categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
 
 class User(Base):
     __tablename__ = "users"
@@ -60,6 +72,10 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     phone_number = Column(String, nullable=True)
     clinic_site_id = Column(Integer, ForeignKey("clinic_sites.id"), nullable=True)
+    # Frontend-owned UI state (theme, dashboard collapse groups) - a flat
+    # dict the backend just stores/returns, never validates or queries. See
+    # GET/PATCH /users/me/preferences in main.py.
+    ui_preferences = Column(JSON, nullable=True)
 
     clinic_site = relationship("ClinicSite", back_populates="users")
 

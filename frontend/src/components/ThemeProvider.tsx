@@ -1,5 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useState } from "react";
+import { API_BASE_URL, updateUserPreferences } from "@/lib/api";
 
 export type Theme = "light" | "dark" | "system";
 type ResolvedTheme = "light" | "dark";
@@ -10,6 +11,12 @@ type ThemeContextValue = {
   /** What's actually applied right now ("system" always resolved to light/dark). */
   resolvedTheme: ResolvedTheme;
   setTheme: (theme: Theme) => void;
+  /** Pulls the saved theme from the server and applies it if present -
+   *  see the login page, which calls this right after storing a fresh
+   *  token (client-side navigation into the app never remounts this
+   *  provider, so its own mount-time sync only ever catches an
+   *  already-authenticated page *reload*, not a fresh login). */
+  syncThemeFromServer: () => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -45,6 +52,39 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setResolvedTheme(stored === "system" ? getSystemTheme() : stored);
   }, []);
 
+  // Cross-device sync: once logged in, a saved server preference wins over
+  // whatever's cached locally (e.g. a different theme set on another
+  // browser). Only ever runs with a token present - this provider also
+  // mounts on the unauthenticated login page, where it must stay a no-op.
+  // Doesn't touch the blocking init-script/localStorage flash-prevention in
+  // layout.tsx - that still applies the last-known value before first
+  // paint; this only settles a moment later if the server disagrees.
+  const syncThemeFromServer = () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    fetch(`${API_BASE_URL}/users/me/preferences`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        const serverTheme = data?.preferences?.theme as Theme | undefined;
+        if (!serverTheme || !["light", "dark", "system"].includes(serverTheme)) return;
+        setThemeState(serverTheme);
+        localStorage.setItem(STORAGE_KEY, serverTheme);
+        const resolved = serverTheme === "system" ? getSystemTheme() : serverTheme;
+        setResolvedTheme(resolved);
+        applyTheme(resolved);
+      })
+      .catch(() => {});
+  };
+
+  // Covers reloading an already-authenticated tab (e.g. F5 on /dashboard) -
+  // a token is already present at this provider's one-time mount. A fresh
+  // *login* is a client-side navigation that never remounts this provider,
+  // so that path calls syncThemeFromServer() explicitly instead (see
+  // login/page.tsx) rather than relying on this effect to catch it.
+  useEffect(() => {
+    syncThemeFromServer();
+  }, []);
+
   useEffect(() => {
     if (theme !== "system") return;
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
@@ -63,10 +103,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const resolved = next === "system" ? getSystemTheme() : next;
     setResolvedTheme(resolved);
     applyTheme(resolved);
+    updateUserPreferences({ theme: next });
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme }}>
+    <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme, syncThemeFromServer }}>
       {children}
     </ThemeContext.Provider>
   );

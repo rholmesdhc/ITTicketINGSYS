@@ -5,6 +5,7 @@ load_dotenv()  # must run before entra_auth is imported - it reads ENTRA_* env v
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import timedelta, datetime
 import models, schemas, auth, entra_auth, notifications, triage
 from mailer import send_mail
@@ -197,13 +198,78 @@ def read_user_directory(db: Session = Depends(get_db), current_user: models.User
     # included and why.
     return db.query(models.User).order_by(models.User.email).all()
 
-@app.get("/categories", response_model=list[str])
-def read_categories():
-    # Single source of truth for valid ticket categories, consumed by both
-    # the web form and (ideally) any other client creating tickets - e.g.
-    # the MCP server - so nobody has to hardcode a second, driftable copy
-    # of this list. See TICKET_CATEGORIES in schemas.py.
-    return schemas.TICKET_CATEGORIES
+@app.get("/users/me/preferences", response_model=schemas.UserPreferences)
+def read_my_preferences(current_user: models.User = Depends(get_current_user)):
+    # Self-service, any authenticated role - unlike PATCH /users/{user_id}
+    # (admin-only), this only ever touches the caller's own row. Doesn't
+    # collide with /users/{user_id} - different path depth, so no
+    # route-ordering concerns with FastAPI's matcher.
+    return {"preferences": current_user.ui_preferences or {}}
+
+@app.patch("/users/me/preferences", response_model=schemas.UserPreferences)
+def update_my_preferences(payload: schemas.UserPreferences, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Shallow-merge, not overwrite - a PATCH that only sends {"theme":
+    # "dark"} shouldn't wipe out previously saved dashboard collapse state.
+    # Reassigning the dict (not mutating in place) matters - SQLAlchemy only
+    # detects JSON column changes on reassignment.
+    current_user.ui_preferences = {**(current_user.ui_preferences or {}), **payload.preferences}
+    db.commit()
+    db.refresh(current_user)
+    return {"preferences": current_user.ui_preferences}
+
+@app.get("/categories", response_model=list[schemas.CategoryResponse])
+def read_categories(db: Session = Depends(get_db)):
+    # Admin-managed (see models.Category) - open to any caller, same as
+    # before, since the ticket-creation form needs this unauthenticated-ish
+    # (any logged-in role, not just admin) to populate its dropdown. Returns
+    # id+name now (was bare strings) so the admin management UI in Settings
+    # can edit/delete specific rows from the same response.
+    return db.query(models.Category).order_by(models.Category.name).all()
+
+@app.post("/categories", response_model=schemas.CategoryResponse)
+def create_category(category: schemas.CategoryCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role != models.RoleEnum.admin:
+        raise HTTPException(status_code=403, detail="Not authorized to manage categories")
+    name = category.name.strip()
+    existing = db.query(models.Category).filter(func.lower(models.Category.name) == name.lower()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"A category named '{existing.name}' already exists")
+    db_category = models.Category(name=name)
+    db.add(db_category)
+    db.commit()
+    db.refresh(db_category)
+    return db_category
+
+@app.patch("/categories/{category_id}", response_model=schemas.CategoryResponse)
+def update_category(category_id: int, category_update: schemas.CategoryUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role != models.RoleEnum.admin:
+        raise HTTPException(status_code=403, detail="Not authorized to manage categories")
+    db_category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not db_category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    name = category_update.name.strip()
+    existing = db.query(models.Category).filter(func.lower(models.Category.name) == name.lower(), models.Category.id != category_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"A category named '{existing.name}' already exists")
+    db_category.name = name
+    db.commit()
+    db.refresh(db_category)
+    return db_category
+
+@app.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category(category_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role != models.RoleEnum.admin:
+        raise HTTPException(status_code=403, detail="Not authorized to manage categories")
+    db_category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not db_category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    # No FK from tickets.category to this table (see plan/models.py comment
+    # on Category) - existing tickets keep their point-in-time category
+    # text untouched, so deleting a row here is always safe, no
+    # "in use" check needed.
+    db.delete(db_category)
+    db.commit()
+    return None
 
 @app.get("/clinic-sites/", response_model=list[schemas.ClinicSiteResponse])
 def read_clinic_sites(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
@@ -287,6 +353,16 @@ def sla_deadline_for_priority(priority: str, from_time: datetime) -> datetime | 
 
 @app.post("/tickets/", response_model=schemas.TicketResponse)
 def create_ticket(ticket: schemas.TicketCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Category validity used to be a Pydantic field_validator against a
+    # static list - categories are admin-managed now (models.Category), and
+    # a field_validator has no DB access, so this check moved here.
+    # Case-insensitive match, normalized to the DB's canonical casing, same
+    # behavior the old validator had.
+    db_category = db.query(models.Category).filter(func.lower(models.Category.name) == ticket.category.strip().lower()).first()
+    if not db_category:
+        valid_names = [c.name for c in db.query(models.Category).order_by(models.Category.name).all()]
+        raise HTTPException(status_code=422, detail=f"category must be one of: {', '.join(valid_names)}")
+
     now = datetime.utcnow()
     needs_review = False
 
@@ -312,7 +388,7 @@ def create_ticket(ticket: schemas.TicketCreate, background_tasks: BackgroundTask
     db_ticket = models.Ticket(
         title=ticket.title,
         description=ticket.description,
-        category=ticket.category,
+        category=db_category.name,
         priority=priority,
         sla_deadline=sla,
         priority_needs_review=needs_review,

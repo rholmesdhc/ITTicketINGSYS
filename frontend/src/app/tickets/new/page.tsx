@@ -156,10 +156,13 @@ export default function NewTicket() {
   }, []);
 
   useEffect(() => {
+    // Categories are admin-managed now (see Settings) - the endpoint
+    // returns {id, name} objects so the admin CRUD UI can target specific
+    // rows, but this form only ever needs the names.
     fetch(`${API_BASE_URL}/categories`)
-      .then(res => (res.ok ? res.json() : FALLBACK_CATEGORIES))
-      .then((cats: string[]) => {
-        if (cats.length > 0) setCategories(cats);
+      .then(res => (res.ok ? res.json() : null))
+      .then((cats: { id: number; name: string }[] | null) => {
+        if (cats && cats.length > 0) setCategories(cats.map(c => c.name));
       })
       .catch(() => {});
   }, []);
@@ -386,9 +389,19 @@ export default function NewTicket() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Asset ID (Optional)</label>
-                  <input type="number" placeholder="e.g. 1004" className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none"
-                         value={formData.asset_id} onChange={e => setFormData({...formData, asset_id: e.target.value})} />
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                    Asset ID (Optional)
+                    <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded align-middle">
+                      Coming Soon
+                    </span>
+                  </label>
+                  {/* Disabled, not just optional - full asset management (search/lookup,
+                      not a raw numeric ID nobody actually knows) is planned but not built
+                      yet; see docs/asset-management-prd.md. Leaving this half-working
+                      (a bare number field with no validation/lookup) would be worse than
+                      not offering it at all. */}
+                  <input type="number" placeholder="Asset tracking is coming soon" disabled
+                         className="w-full px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-700/50 text-slate-400 dark:text-slate-500 cursor-not-allowed" />
                 </div>
 
                 <div>

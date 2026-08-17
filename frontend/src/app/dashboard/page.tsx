@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
-import { API_BASE_URL, isUnauthorized, logout } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized, logout, updateUserPreferences } from "@/lib/api";
 import { isOverdue, isDueWithin, formatRelativeSla, urgencyRank, PRIORITY_RANK } from "@/lib/ticketSla";
 import OnboardingWizard from "@/components/OnboardingWizard";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -121,10 +121,34 @@ export default function Dashboard() {
   const [sortField, setSortField] = useState<SortField>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [resolvedExpanded, setResolvedExpanded] = useState(false);
-  // Collapsible dashboard groups (tester-requested) - both default open so
-  // nobody's existing view changes until they actually collapse something.
+  // Collapsible dashboard groups (tester-requested) - default open/closed
+  // matches pre-persistence behavior; overridden by the user's saved
+  // preference once GET /users/me/preferences resolves (see mount effect
+  // below). Plain setKpiExpanded/etc (not these toggle* wrappers) is still
+  // used for applying that fetched value, since that's not a user action
+  // and shouldn't re-save what was just loaded.
   const [kpiExpanded, setKpiExpanded] = useState(true);
   const [workloadChartsExpanded, setWorkloadChartsExpanded] = useState(true);
+  // Plain reads of current state (not functional updaters) are fine here -
+  // these are simple click handlers, not rapid/batched updates, and
+  // keeping the updateUserPreferences side effect out of the updater
+  // callback avoids it double-firing under React Strict Mode's
+  // double-invocation of updater functions.
+  const toggleKpiExpanded = () => {
+    const next = !kpiExpanded;
+    setKpiExpanded(next);
+    updateUserPreferences({ dashboard_kpi_expanded: next });
+  };
+  const toggleWorkloadChartsExpanded = () => {
+    const next = !workloadChartsExpanded;
+    setWorkloadChartsExpanded(next);
+    updateUserPreferences({ dashboard_workload_charts_expanded: next });
+  };
+  const toggleResolvedExpanded = () => {
+    const next = !resolvedExpanded;
+    setResolvedExpanded(next);
+    updateUserPreferences({ dashboard_resolved_expanded: next });
+  };
 
   // Bulk / fast actions state
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -167,6 +191,30 @@ export default function Dashboard() {
       })
       .then(setDirectory)
       .catch(() => setDirectory([]));
+
+    // Saved collapse-group preferences (see lib/api.ts's
+    // updateUserPreferences) - applies over today's hardcoded defaults only
+    // for keys that are actually present, so a user who's never touched a
+    // given toggle still gets the normal default. Uses the plain setters,
+    // not the toggle* wrappers, since loading a saved value isn't a user
+    // action and shouldn't immediately re-save it. Not gated behind
+    // isInitialLoading - a brief flash to the saved state on first render
+    // is an accepted tradeoff for a cosmetic preference (see plan).
+    fetch(`${API_BASE_URL}/users/me/preferences`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    })
+      .then(res => {
+        if (isUnauthorized(res)) return null;
+        return res.ok ? res.json() : null;
+      })
+      .then(data => {
+        const prefs = data?.preferences;
+        if (!prefs) return;
+        if (typeof prefs.dashboard_kpi_expanded === "boolean") setKpiExpanded(prefs.dashboard_kpi_expanded);
+        if (typeof prefs.dashboard_workload_charts_expanded === "boolean") setWorkloadChartsExpanded(prefs.dashboard_workload_charts_expanded);
+        if (typeof prefs.dashboard_resolved_expanded === "boolean") setResolvedExpanded(prefs.dashboard_resolved_expanded);
+      })
+      .catch(() => {});
   }, [router]);
 
   // Item 19: poll for new/changed tickets every 30s so anything created
@@ -975,7 +1023,7 @@ export default function Dashboard() {
             (tester-requested) - individually collapsing each card would be
             more fiddly than useful for 3-4 small numbers. */}
         <div className="mb-8">
-        <CollapsibleSectionHeader title="Key Metrics" expanded={kpiExpanded} onToggle={() => setKpiExpanded(v => !v)} />
+        <CollapsibleSectionHeader title="Key Metrics" expanded={kpiExpanded} onToggle={() => toggleKpiExpanded()} />
         {kpiExpanded && (
         <div data-tour="kpi-cards" className={`grid grid-cols-1 gap-6 ${isAdminOrTech ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
           {isAdminOrTech ? (
@@ -1037,7 +1085,7 @@ export default function Dashboard() {
             isAdminOrTech same as before. */}
         {isAdminOrTech && (workload.length > 0 || tickets.length > 0) && (
           <div className="mb-8">
-            <CollapsibleSectionHeader title="Workload & Analytics" expanded={workloadChartsExpanded} onToggle={() => setWorkloadChartsExpanded(v => !v)} />
+            <CollapsibleSectionHeader title="Workload & Analytics" expanded={workloadChartsExpanded} onToggle={() => toggleWorkloadChartsExpanded()} />
             {workloadChartsExpanded && (
               <>
               {workload.length > 0 && (
@@ -1287,7 +1335,7 @@ export default function Dashboard() {
         {/* Resolved tickets - collapsed by default so they don't crowd the active work queue */}
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mt-6">
           <button
-            onClick={() => setResolvedExpanded(v => !v)}
+            onClick={() => toggleResolvedExpanded()}
             className="w-full flex justify-between items-center p-4 text-left cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"
           >
             <span className="font-semibold text-slate-700 dark:text-slate-200">Resolved Tickets ({sortedResolved.length})</span>

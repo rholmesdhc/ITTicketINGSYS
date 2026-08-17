@@ -1,16 +1,20 @@
-from pydantic import BaseModel, field_validator
-from typing import Optional, List
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-# Canonical ticket categories. Both the web form (frontend/src/app/tickets/new)
-# and the MCP server tool must offer exactly these - previously the web form
-# had its own hardcoded dropdown while the MCP tool accepted arbitrary free
-# text with entirely different example values ('software', 'network',
-# 'access'), so tickets filed through each path landed in different,
-# non-overlapping category buckets. "Software" is included because it's
-# already the most common real category in production data, despite never
-# having been an option in the web form.
-TICKET_CATEGORIES = ["Hardware/Workstation", "Software", "EHR/NextGen", "Network/Connectivity", "Telecom"]
+class CategoryBase(BaseModel):
+    name: str
+
+class CategoryCreate(CategoryBase):
+    pass
+
+class CategoryUpdate(BaseModel):
+    name: str
+
+class CategoryResponse(CategoryBase):
+    id: int
+    class Config:
+        from_attributes = True
 
 class ClinicSiteBase(BaseModel):
     name: str
@@ -59,6 +63,13 @@ class UserResponse(UserBase):
     class Config:
         from_attributes = True
 
+class UserPreferences(BaseModel):
+    """Opaque frontend UI state (theme, dashboard collapse groups) - used
+    for both GET and PATCH /users/me/preferences. PATCH shallow-merges this
+    into whatever's already stored, so callers only need to send the keys
+    they're actually changing."""
+    preferences: Dict[str, Any]
+
 class UserUpdate(BaseModel):
     role: Optional[str] = None
     first_name: Optional[str] = None
@@ -99,14 +110,9 @@ class TicketCreate(BaseModel):
     asset_id: Optional[int] = None
     affected_user_id: Optional[int] = None
     clinic_site_id: Optional[int] = None
-
-    @field_validator("category")
-    @classmethod
-    def normalize_category(cls, v: str) -> str:
-        for canonical in TICKET_CATEGORIES:
-            if v.strip().lower() == canonical.lower():
-                return canonical
-        raise ValueError(f"category must be one of: {', '.join(TICKET_CATEGORIES)}")
+    # Category validity is no longer a static Pydantic check - categories
+    # are now admin-managed (see models.Category), and a field_validator
+    # has no DB access. Checked in create_ticket instead.
 
 class TicketUpdate(BaseModel):
     status: Optional[str] = None

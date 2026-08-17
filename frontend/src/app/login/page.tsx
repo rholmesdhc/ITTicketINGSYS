@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useSession, signIn } from "next-auth/react";
 import { API_BASE_URL } from "@/lib/api";
 import ThemeToggle from "@/components/ThemeToggle";
+import { useTheme } from "@/components/ThemeProvider";
 
 // useSearchParams() opts the component using it out of static rendering
 // unless isolated behind a Suspense boundary - kept separate so the rest
@@ -31,6 +32,7 @@ function SessionExpiredBanner() {
 function EntraLoginBridge() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { syncThemeFromServer } = useTheme();
   const [error, setError] = useState("");
   const exchanged = useRef(false);
 
@@ -51,13 +53,17 @@ function EntraLoginBridge() {
         localStorage.setItem("token", data.access_token);
         localStorage.setItem("role", data.role);
         localStorage.setItem("userId", data.id);
+        // Client-side navigation below never remounts ThemeProvider (it
+        // lives in the root layout), so its own mount-time server sync
+        // would never see this token - call it explicitly instead.
+        syncThemeFromServer();
         router.push("/dashboard");
       } catch (e) {
         exchanged.current = false;
         setError("Signed in with Microsoft, but couldn't complete sign-in to the ticketing app. Try again.");
       }
     })();
-  }, [session, status, router]);
+  }, [session, status, router, syncThemeFromServer]);
 
   if (status === "loading" || (status === "authenticated" && !error)) {
     return <p className="text-center text-slate-500 dark:text-slate-400 text-sm mb-4">Finishing sign-in...</p>;
@@ -72,6 +78,7 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const router = useRouter();
+  const { syncThemeFromServer } = useTheme();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,6 +93,10 @@ export default function Login() {
         localStorage.setItem("token", data.access_token);
         localStorage.setItem("role", data.role);
         localStorage.setItem("userId", data.id);
+        // Same reasoning as EntraLoginBridge - client-side navigation below
+        // never remounts ThemeProvider, so its mount-time sync alone would
+        // never see this fresh token.
+        syncThemeFromServer();
         router.push("/dashboard");
       } else {
         alert("Invalid login");

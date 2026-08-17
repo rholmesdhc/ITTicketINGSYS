@@ -244,7 +244,12 @@ export default function TicketDetail() {
                 <p className="text-lg font-medium text-slate-800 dark:text-slate-100">{ticket.category}</p>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Asset Link</h3>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
+                  Asset Link
+                  <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 rounded normal-case">
+                    Coming Soon
+                  </span>
+                </h3>
                 <p className="text-lg font-medium text-slate-800 dark:text-slate-100">{ticket.asset_id ? `Asset #${ticket.asset_id}` : "None Selected"}</p>
               </div>
               <div>
