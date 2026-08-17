@@ -90,7 +90,12 @@ class TicketCreate(BaseModel):
     title: str
     description: str
     category: str
-    priority: str
+    # Optional here, not required: requesters don't send one at all (the
+    # server decides via AI triage - see triage.py/create_ticket), while
+    # technicians/admins still must supply one - that split is enforced in
+    # create_ticket itself since it depends on the caller's role, not
+    # something Pydantic alone can express.
+    priority: Optional[str] = None
     asset_id: Optional[int] = None
     affected_user_id: Optional[int] = None
     clinic_site_id: Optional[int] = None
@@ -106,6 +111,11 @@ class TicketCreate(BaseModel):
 class TicketUpdate(BaseModel):
     status: Optional[str] = None
     tech_id: Optional[int] = None
+    # Lets a technician/admin correct a bad AI-triage call after the fact
+    # (see update_ticket, which recalculates sla_deadline and clears
+    # priority_needs_review when this is set) - priority couldn't be
+    # changed post-creation at all before this.
+    priority: Optional[str] = None
     affected_user_id: Optional[int] = None
     clinic_site_id: Optional[int] = None
     technician_note: Optional[str] = None
@@ -118,6 +128,7 @@ class TicketResponse(BaseModel):
     status: str
     category: str
     priority: str
+    priority_needs_review: bool
     created_at: datetime
     updated_at: datetime
     sla_deadline: Optional[datetime]

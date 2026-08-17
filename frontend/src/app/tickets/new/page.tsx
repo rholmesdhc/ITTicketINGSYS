@@ -131,6 +131,12 @@ function formatDeadline(iso: string): string {
 
 export default function NewTicket() {
   const router = useRouter();
+  // Priority is only requester-editable for staff filing a ticket
+  // themselves - requesters get it decided for them by AI triage server-side
+  // (see backend/triage.py + create_ticket), since left to pick their own,
+  // almost everyone reflexively selects P1 regardless of actual severity.
+  const [role, setRole] = useState<string | null>(null);
+  const isStaff = role === "admin" || role === "technician";
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -144,6 +150,10 @@ export default function NewTicket() {
   const [dismissedDuplicateWarning, setDismissedDuplicateWarning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [createdTicket, setCreatedTicket] = useState<CreatedTicket | null>(null);
+
+  useEffect(() => {
+    setRole(localStorage.getItem("role"));
+  }, []);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/categories`)
@@ -199,8 +209,13 @@ export default function NewTicket() {
     e.preventDefault();
     setSubmitting(true);
     try {
+      const { priority, ...rest } = formData;
       const payload = {
-        ...formData,
+        ...rest,
+        // Requesters don't choose priority - the backend decides via AI
+        // triage regardless of what's in formData, but there's no reason
+        // to send a stale/template value that'll just be discarded.
+        ...(isStaff ? { priority } : {}),
         asset_id: formData.asset_id ? parseInt(formData.asset_id) : null,
         affected_user_id: affectedUserId
       };
@@ -246,6 +261,7 @@ export default function NewTicket() {
             <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-2">Ticket #{createdTicket.id} Submitted</h2>
             <p className="text-slate-600 dark:text-slate-300 mb-1">
               Priority <strong>{createdTicket.priority}</strong>
+              {!isStaff && <span className="text-slate-400 dark:text-slate-500 text-sm"> (assessed by our triage system)</span>}
               {createdTicket.sla_deadline && <> - expected response {formatDeadline(createdTicket.sla_deadline)}</>}
             </p>
             <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">
@@ -344,13 +360,19 @@ export default function NewTicket() {
 
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Priority (Urgency Matrix)</label>
-                    <select className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none bg-slate-50 dark:bg-slate-700 dark:text-slate-100"
-                            value={formData.priority} onChange={e => setFormData({...formData, priority: e.target.value})}>
-                      <option value="P4">P4 - General Inquiry (48h)</option>
-                      <option value="P3">P3 - Minor Issue (24h)</option>
-                      <option value="P2">P2 - Major Disruption (4h)</option>
-                      <option value="P1">P1 - Critical Patient Care Impact (1h)</option>
-                    </select>
+                    {isStaff ? (
+                      <select className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none bg-slate-50 dark:bg-slate-700 dark:text-slate-100"
+                              value={formData.priority} onChange={e => setFormData({...formData, priority: e.target.value})}>
+                        <option value="P4">P4 - General Inquiry (48h)</option>
+                        <option value="P3">P3 - Minor Issue (24h)</option>
+                        <option value="P2">P2 - Major Disruption (4h)</option>
+                        <option value="P1">P1 - Critical Patient Care Impact (1h)</option>
+                      </select>
+                    ) : (
+                      <div className="w-full px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-700/50 text-sm text-slate-500 dark:text-slate-400">
+                        Assessed automatically from your description
+                      </div>
+                    )}
                   </div>
                 </div>
 

@@ -115,6 +115,12 @@ class Ticket(Base):
     # the ticket is later reopened, as a historical record of what was
     # tried.
     resolution = Column(String, nullable=True)
+    # True when priority was set by the AI triage fallback (the classifier
+    # was unreachable/timed out/returned something unusable at creation, so
+    # it landed on the safety-net P3 rather than a real assessment) - lets
+    # technicians find these instead of trusting an unreviewed guess.
+    # Cleared the moment a technician/admin sets priority explicitly.
+    priority_needs_review = Column(Boolean, default=False, nullable=False)
 
     requester = relationship("User", back_populates="tickets_submitted", foreign_keys=[requester_id])
     technician = relationship("User", back_populates="tickets_assigned", foreign_keys=[tech_id])

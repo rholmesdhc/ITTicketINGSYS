@@ -6,7 +6,7 @@ import httpx
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-import models, schemas, auth, entra_auth, notifications
+import models, schemas, auth, entra_auth, notifications, triage
 from mailer import send_mail
 from database import get_db
 
@@ -26,6 +26,11 @@ app = FastAPI(title="IT Ticketing System API")
 # Configure CORS. CORS_ORIGINS is a comma-separated list of allowed
 # origins; defaults to the local frontend dev server.
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3005").split(",")
+
+# AI ticket-priority triage service (see triage.py) - a colleague's
+# separately-hosted classifier, not part of this app's own deployment.
+TRIAGE_API_URL = os.getenv("TRIAGE_API_URL", "")
+TRIAGE_API_KEY = os.getenv("TRIAGE_API_KEY", "")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in cors_origins],
@@ -271,26 +276,46 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
     return None
 
 
+def sla_deadline_for_priority(priority: str, from_time: datetime) -> datetime | None:
+    """P1-P4 -> SLA response window, offset from from_time. Shared by
+    ticket creation and the priority-correction path in update_ticket so
+    both compute deadlines the same way."""
+    offsets = {"P1": timedelta(hours=1), "P2": timedelta(hours=4), "P3": timedelta(hours=24), "P4": timedelta(hours=48)}
+    offset = offsets.get(priority)
+    return from_time + offset if offset else None
+
+
 @app.post("/tickets/", response_model=schemas.TicketResponse)
 def create_ticket(ticket: schemas.TicketCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    # Standard time to resolution logic based on default requirements
-    sla = None
     now = datetime.utcnow()
-    if ticket.priority == "P1":
-        sla = now + timedelta(hours=1)
-    elif ticket.priority == "P2":
-        sla = now + timedelta(hours=4)
-    elif ticket.priority == "P3":
-        sla = now + timedelta(hours=24)
-    elif ticket.priority == "P4":
-        sla = now + timedelta(hours=48)
-        
+    needs_review = False
+
+    if current_user.role == models.RoleEnum.requester:
+        # Requesters don't get to set their own priority - left unchecked,
+        # almost everyone picks P1 regardless of actual severity, which
+        # defeats the SLA system's purpose (P1 = 1 hour response). Whatever
+        # they sent, if anything, is discarded in favor of the triage
+        # service's assessment - see triage.py for the fallback behavior
+        # when that service is unreachable/wrong.
+        priority, needs_review = triage.classify_priority(ticket.title, ticket.description, TRIAGE_API_URL, TRIAGE_API_KEY)
+    else:
+        # Technicians/admins filing a ticket themselves keep manual control
+        # - they already know how to triage and shouldn't be second-guessed
+        # by an LLM every time. Still required for this path, same as the
+        # MCP tool, which always passes one explicitly.
+        if not ticket.priority:
+            raise HTTPException(status_code=400, detail="priority is required")
+        priority = ticket.priority
+
+    sla = sla_deadline_for_priority(priority, now)
+
     db_ticket = models.Ticket(
         title=ticket.title,
         description=ticket.description,
         category=ticket.category,
-        priority=ticket.priority,
+        priority=priority,
         sla_deadline=sla,
+        priority_needs_review=needs_review,
         requester_id=current_user.id,
         asset_id=ticket.asset_id,
         affected_user_id=ticket.affected_user_id,
@@ -375,6 +400,16 @@ def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, backgroun
         effective_resolution = update_data.get("resolution", db_ticket.resolution)
         if not (effective_resolution and effective_resolution.strip()):
             raise HTTPException(status_code=400, detail="A resolution is required before marking this ticket resolved.")
+
+    # Priority correction (e.g. fixing a bad AI-triage call): recompute the
+    # SLA deadline as if the ticket had had this priority since it was
+    # filed, not a fresh window starting now - a ticket misclassified as P4
+    # and corrected to P1 ten hours later should immediately show as
+    # overdue, not get a brand new hour of grace it doesn't deserve. Also
+    # clears priority_needs_review - a human has now set this themselves.
+    if "priority" in update_data:
+        db_ticket.sla_deadline = sla_deadline_for_priority(update_data["priority"], db_ticket.created_at)
+        db_ticket.priority_needs_review = False
 
     for key, value in update_data.items():
         setattr(db_ticket, key, value)

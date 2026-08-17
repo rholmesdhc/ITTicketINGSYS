@@ -689,6 +689,9 @@ export default function Dashboard() {
           <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-300'}`}>
             {t.priority}
           </span>
+          {t.priority_needs_review && (
+            <span className="ml-1" title="AI triage couldn't reach the classifier - this defaulted to P3 and hasn't been reviewed by a technician yet">🤖⚠️</span>
+          )}
         </td>
         <td className="p-4 text-sm font-medium">
           <div className={overdue ? "text-red-600 dark:text-red-400 font-bold flex items-center gap-2" : "text-slate-600 dark:text-slate-300"}>
@@ -766,6 +769,7 @@ export default function Dashboard() {
           </div>
           <span className={`shrink-0 px-2 py-1 rounded text-xs font-bold uppercase ${t.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-300'}`}>
             {t.priority}
+            {t.priority_needs_review && <span className="ml-1" title="AI triage couldn't reach the classifier - defaulted to P3, not yet reviewed">🤖⚠️</span>}
           </span>
         </div>
 

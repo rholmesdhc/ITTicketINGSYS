@@ -26,6 +26,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS}
+      # --- AI ticket-priority triage (see backend/triage.py) ---
+      TRIAGE_API_URL: ${TRIAGE_API_URL}
+      TRIAGE_API_KEY: ${TRIAGE_API_KEY}
       # --- Entra ID login (see backend/entra_auth.py) ---
       ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
       ENTRA_MCP_CLIENT_ID: ${ENTRA_MCP_CLIENT_ID}
