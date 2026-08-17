@@ -1,37 +1,30 @@
-# UAT-only TLS termination in front of the frontend/backend containers.
-# `tls internal` uses Caddy's own local CA to mint a self-signed cert -
-# Entra just needs the *scheme* to be https, it doesn't validate the cert
-# chain itself (the browser does, and will show a one-time "not trusted"
-# warning here - expected for a self-signed cert on an internal UAT box,
-# not something to fix unless this ever needs to be publicly trusted).
+# UAT TLS termination in front of the frontend/backend containers, routed
+# by hostname on standard ports (80/443) instead of the app's own custom
+# ports (3005/8005) - lets people reach this over a normal-looking URL
+# instead of an IP:port.
 #
-# Both identities are listed explicitly (not a bare `:PORT` address) so
-# Caddy issues the cert eagerly at config load for these known names,
-# rather than needing on-demand TLS (which requires an explicit ask
-# policy Caddy won't assume by default, for good reason - a hostless
-# address serving arbitrary incoming SNI is exactly the on-demand-abuse
-# scenario that guard rail exists for). $UAT_HOST is this box's real IP,
-# set in .env.uat - "localhost" covers deploy-uat.yml's own health check,
-# which runs on this same box.
+# `tls internal` uses Caddy's own local CA to mint a self-signed cert -
+# dhc.org is an internal-only name (not a real public domain this box can
+# prove ownership of via ACME), so a publicly-trusted cert isn't an
+# option here. Entra just needs the *scheme* to be https, it doesn't
+# validate the cert chain itself (the browser does, and will show a
+# one-time "not trusted" warning to click through - expected, not a bug).
+#
+# default_sni matters for anyone still reaching this by raw IP instead of
+# the hostname (deploy-uat.yml's health check included, until it's
+# updated to use the real hostnames too) - TLS SNI doesn't apply to bare
+# IP literals, so a client connecting to https://<ip> sends no SNI at
+# all, and Caddy needs to be told which site to serve in that case.
 {
-	auto_https disable_redirects
-	# TLS SNI doesn't work with bare IP literals - per the TLS spec,
-	# clients only send the SNI extension for actual hostnames, so a
-	# browser connecting to https://<ip>:port sends NO SNI at all. Without
-	# this, Caddy has no way to know which of the two identities below to
-	# serve a cert for on such a connection (only the "localhost" identity
-	# - which does get real SNI - worked before this was added). This is
-	# the path that actually matters: real users hit this by IP, not a
-	# hostname, since there is no DNS name for this internal UAT box.
-	default_sni {$UAT_HOST}
+	default_sni {$FRONTEND_HOST}
 }
 
-{$UAT_HOST}:3005, localhost:3005 {
+{$FRONTEND_HOST} {
 	tls internal
 	reverse_proxy frontend:3005
 }
 
-{$UAT_HOST}:8005, localhost:8005 {
+{$BACKEND_HOST} {
 	tls internal
 	reverse_proxy backend:8005
 }

@@ -68,7 +68,7 @@ services:
       # https://0.0.0.0:3005/... instead of the real IP on the first live
       # attempt, which Entra rejected as a redirect-URI mismatch). This
       # removes the ambiguity entirely.
-      AUTH_URL: https://${UAT_HOST}:3005
+      AUTH_URL: https://${FRONTEND_HOST}
     # Not published directly to the host anymore - see caddy below.
     expose:
       - "3005"
@@ -78,7 +78,9 @@ services:
   # host, including private IPs. This terminates TLS (self-signed, see
   # Caddyfile) in front of both frontend and backend so Entra login can
   # work on UAT at all; the app containers themselves are unchanged and
-  # still speak plain HTTP internally.
+  # still speak plain HTTP internally. Routed by hostname on standard
+  # ports 80/443 - FRONTEND_HOST/BACKEND_HOST need real DNS A-records
+  # pointing at this box (see .env.uat.example).
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -86,10 +88,11 @@ services:
       - frontend
       - backend
     environment:
-      UAT_HOST: ${UAT_HOST}
+      FRONTEND_HOST: ${FRONTEND_HOST}
+      BACKEND_HOST: ${BACKEND_HOST}
     ports:
-      - "3005:3005"
-      - "8005:8005"
+      - "80:80"
+      - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

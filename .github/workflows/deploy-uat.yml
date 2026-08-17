@@ -68,13 +68,19 @@ jobs:
       - name: Health check
         run: |
           # https + -k (self-signed cert, see Caddyfile - Entra requires
-          # https:// on this box, plain http was removed entirely)
+          # https:// on this box, plain http was removed entirely).
+          # Caddy now routes by hostname (FRONTEND_HOST/BACKEND_HOST), not
+          # by port, so this needs the real hostnames - --resolve pins
+          # them to 127.0.0.1 (this check runs on the same box Caddy is
+          # on) so it works instantly regardless of external DNS
+          # propagation timing.
+          set -a; source /opt/it-ticketing/.env.uat; set +a
           for i in $(seq 1 15); do
-            curl --fail -sk https://localhost:8005/docs > /dev/null && backend_ok=1 && break
+            curl --fail -sk --resolve "${BACKEND_HOST}:443:127.0.0.1" "https://${BACKEND_HOST}/docs" > /dev/null && backend_ok=1 && break
             sleep 2
           done
           for i in $(seq 1 15); do
-            curl --fail -sk https://localhost:3005/login > /dev/null && frontend_ok=1 && break
+            curl --fail -sk --resolve "${FRONTEND_HOST}:443:127.0.0.1" "https://${FRONTEND_HOST}/login" > /dev/null && frontend_ok=1 && break
             sleep 2
           done
           if [ -z "$backend_ok" ] || [ -z "$frontend_ok" ]; then
