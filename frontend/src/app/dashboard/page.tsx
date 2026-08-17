@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 import { API_BASE_URL, isUnauthorized, logout } from "@/lib/api";
@@ -850,7 +851,17 @@ export default function Dashboard() {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
       <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
         <div className="flex items-center gap-6">
-          <h1 className="text-xl font-bold">Clinical IT Portal</h1>
+          <div className="flex items-center gap-3">
+            <Image
+              src="/images/delta-health-logo.png"
+              alt="Delta Health Center"
+              width={160}
+              height={68}
+              className="h-9 w-auto rounded bg-white p-1"
+              preload
+            />
+            <h1 className="text-xl font-bold">Clinical IT Portal</h1>
+          </div>
           {role === "admin" && (
             <>
               <Link href="/users" className="text-sm font-semibold hover:text-medical-light transition-colors">

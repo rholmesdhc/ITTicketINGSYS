@@ -1,5 +1,6 @@
 "use client";
 import { Suspense, useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession, signIn } from "next-auth/react";
 import { API_BASE_URL } from "@/lib/api";
@@ -101,6 +102,14 @@ export default function Login() {
       </div>
       <div className="bg-white dark:bg-slate-800 p-10 rounded-xl shadow-xl w-full max-w-md border-t-8 border-medical-blue">
         <div className="text-center mb-8">
+          <Image
+            src="/images/delta-health-logo.png"
+            alt="Delta Health Center"
+            width={280}
+            height={119}
+            className="h-16 w-auto mx-auto mb-4"
+            preload
+          />
           <h1 className="text-3xl font-bold text-medical-dark dark:text-medical-light">Clinical IT Portal</h1>
           <p className="text-slate-500 dark:text-slate-400 mt-2">Sign in to manage support tickets</p>
         </div>
