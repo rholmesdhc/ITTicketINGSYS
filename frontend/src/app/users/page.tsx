@@ -128,6 +128,17 @@ export default function UserManagement() {
     setError("");
   };
 
+  // "+ New User" opens the same modal as editing, just blank - reuses
+  // closeModal's field-reset logic as the single source of truth for
+  // "blank form defaults" rather than duplicating it, then flips the
+  // modal open. (Bug fix: this button used to call closeModal() directly,
+  // which reset already-blank fields on an already-closed modal - visibly
+  // did nothing at all when clicked.)
+  const openCreateModal = () => {
+    closeModal();
+    setIsModalOpen(true);
+  };
+
   const handleDeleteUser = async (userId: number) => {
     if (!window.confirm("Are you sure you want to delete this user?")) return;
     
@@ -237,8 +248,8 @@ export default function UserManagement() {
       <main className="max-w-7xl mx-auto p-10 w-full flex-1">
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-3xl font-semibold text-slate-800 dark:text-slate-100">User Management</h2>
-          <button 
-            onClick={() => closeModal()}
+          <button
+            onClick={() => openCreateModal()}
             className="bg-medical-accent hover:bg-medical-blue text-white px-5 py-2 rounded shadow transition-colors font-semibold cursor-pointer"
           >
             + New User
