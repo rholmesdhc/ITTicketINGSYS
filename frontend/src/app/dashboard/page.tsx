@@ -114,6 +114,13 @@ export default function Dashboard() {
   // Triage & visibility / search & filtering state
   const [activeTab, setActiveTab] = useState<QuickTab>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  // Deliberately separate from searchQuery above - that one filters the
+  // table in place, this one navigates straight to a ticket's own detail
+  // page. Keeping them as two distinct controls avoids the same input
+  // sometimes filtering and sometimes navigating depending on what's typed,
+  // which would be a surprising, inconsistent behavior for one search box.
+  const [jumpToTicketQuery, setJumpToTicketQuery] = useState("");
+  const [jumpToTicketError, setJumpToTicketError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -255,6 +262,23 @@ export default function Dashboard() {
   const handleManualRefresh = () => {
     const token = localStorage.getItem("token");
     if (token) fetchTickets(token, { showSpinner: true });
+  };
+
+  // Navigates straight to a ticket's detail page rather than filtering the
+  // table - the detail page (/tickets/[id]) already 404s (not 403) for a
+  // ticket a requester doesn't own, same as visiting the URL directly, so
+  // there's no separate permission check needed here.
+  const handleJumpToTicket = (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = jumpToTicketQuery.trim().replace(/^#/, "");
+    const id = parseInt(raw, 10);
+    if (!raw || isNaN(id) || id <= 0) {
+      setJumpToTicketError("Enter a valid ticket number");
+      return;
+    }
+    setJumpToTicketError("");
+    setJumpToTicketQuery("");
+    router.push(`/tickets/${id}`);
   };
 
   const handleCloseWizard = () => {
@@ -498,8 +522,48 @@ export default function Dashboard() {
     count: techCounts[key]
   }));
 
+  // "Currently open" ops snapshot (item: reference dashboard shared by the
+  // user) - deliberately a *different* slice than the charts above, which
+  // cover all-time totals regardless of status. "Open" here means "not yet
+  // resolved" (open + in_progress combined), not the single literal "open"
+  // status - a ticket someone's actively working shouldn't disappear from
+  // these the moment a tech picks it up.
+  const openTicketsList = tickets.filter((t: any) => t.status !== 'resolved');
+
+  const openCategoryCounts = openTicketsList.reduce((acc: any, ticket: any) => {
+    acc[ticket.category] = (acc[ticket.category] || 0) + 1;
+    return acc;
+  }, {});
+  const openCategoryData = Object.keys(openCategoryCounts).map(key => ({
+    name: key,
+    count: openCategoryCounts[key]
+  }));
+
+  const openPriorityCounts = openTicketsList.reduce((acc: any, ticket: any) => {
+    acc[ticket.priority] = (acc[ticket.priority] || 0) + 1;
+    return acc;
+  }, {});
+  // Fixed P1-P4 order (not object-key/insertion order) - matches how
+  // PRIORITY_RANK already orders priority everywhere else (lib/ticketSla.ts).
+  const openPriorityData = ["P1", "P2", "P3", "P4"]
+    .map(p => ({ name: p, count: openPriorityCounts[p] || 0 }))
+    .filter(d => d.count > 0);
+
+  const resolvedLast30Days = tickets.filter((t: any) =>
+    t.status === 'resolved' &&
+    new Date(t.updated_at).getTime() > Date.now() - 30 * 24 * 60 * 60 * 1000
+  ).length;
+
   // --- Table pipeline: quick tab -> search -> column filters -> sort ---
   const currentUserIdNum = parseInt(userId || "0");
+
+  // Base for the quick-filter tab pill counts (All/My Tickets/Unassigned/
+  // Overdue/Due Today) - respects the status dropdown only, not the other
+  // column filters or search, and is deliberately separate from
+  // tabFiltered below (that pipeline filters the *table* by the active
+  // tab; this just recalculates what each tab's own pill number should
+  // read given the current status filter).
+  const ticketsForTabCounts = statusFilter ? tickets.filter(t => t.status === statusFilter) : tickets;
 
   const tabFiltered = useMemo(() => {
     switch (activeTab) {
@@ -934,7 +998,7 @@ export default function Dashboard() {
               className="h-9 w-auto rounded bg-white p-1"
               preload
             />
-            <h1 className="text-xl font-bold">Clinical IT Portal</h1>
+            <h1 className="text-xl font-bold">IT Helpdesk Portal</h1>
           </div>
           {role === "admin" && (
             <Link href="/settings" className="text-sm font-semibold hover:text-medical-light transition-colors">
@@ -977,6 +1041,31 @@ export default function Dashboard() {
             </Link>
           </div>
         </div>
+
+        {/* Quick jump to a specific ticket by number - navigates straight to
+            its detail page, distinct from the table search box below (which
+            filters in place). */}
+        <form onSubmit={handleJumpToTicket} className="flex items-center gap-2 mb-6">
+          <div className="relative w-full max-w-xs">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={jumpToTicketQuery}
+              onChange={(e) => { setJumpToTicketQuery(e.target.value); setJumpToTicketError(""); }}
+              placeholder="Jump to ticket #..."
+              aria-label="Jump to ticket by number"
+              className="w-full pl-4 pr-10 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-sm focus:ring-2 focus:ring-medical-accent focus:outline-none"
+            />
+            <button
+              type="submit"
+              aria-label="Go to ticket"
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-medical-blue dark:hover:text-medical-accent cursor-pointer"
+            >
+              →
+            </button>
+          </div>
+          {jumpToTicketError && <span className="text-xs text-red-600 dark:text-red-400">{jumpToTicketError}</span>}
+        </form>
 
         {/* Item 19: manual refresh + last-updated, so it's clear the list can
             go stale (e.g. a ticket filed via MCP) and there's a way to fix it
@@ -1106,6 +1195,7 @@ export default function Dashboard() {
               )}
 
               {tickets.length > 0 && (
+                <>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
                     <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Tickets by Status</h3>
@@ -1168,19 +1258,73 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </div>
+
+                {/* "Currently open" snapshot (item: reference dashboard shared
+                    by the user) - a deliberately different slice than the row
+                    above (all-time totals, any status) - labeled separately so
+                    "Category" appearing twice doesn't read as a duplicate. */}
+                <h3 className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mt-6 mb-3">Currently Open</h3>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Open Tickets by Category</h3>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={openCategoryData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
+                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                          <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                          <RechartsTooltip
+                            cursor={{ fill: cursorFill }}
+                            contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined}
+                          />
+                          <Bar dataKey="count" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                    <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4">Open Tickets by Priority</h3>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={openPriorityData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridStroke} />
+                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                          <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: resolvedTheme === "dark" ? "#94a3b8" : "#475569" }} />
+                          <RechartsTooltip
+                            cursor={{ fill: cursorFill }}
+                            contentStyle={resolvedTheme === "dark" ? { backgroundColor: "#1e293b", border: "1px solid #334155", color: "#f1f5f9" } : undefined}
+                          />
+                          <Bar dataKey="count" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col justify-center">
+                    <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase">Resolved (Last 30 Days)</h3>
+                    <p className="text-4xl font-bold text-emerald-500 dark:text-emerald-400 mt-3">{resolvedLast30Days}</p>
+                    <span className="text-xs text-slate-400 dark:text-slate-500 mt-2 block">Tickets marked resolved in the past 30 days</span>
+                  </div>
+                </div>
+                </>
               )}
               </>
             )}
           </div>
         )}
 
-        {/* Quick-filter tabs */}
+        {/* Quick-filter tabs - pill counts respect the "All Statuses" dropdown
+            below (not the other column filters/search), so e.g. "My Tickets"
+            narrows to just your open ones when that dropdown is set to Open,
+            instead of staying frozen at the org-wide total. All 5 pills stay
+            consistent with each other rather than just one of them moving. */}
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          {tabButton("all", "All", tickets.length)}
-          {isAdminOrTech && tabButton("mine", "My Tickets", tickets.filter(t => t.tech_id === currentUserIdNum).length)}
-          {isAdminOrTech && tabButton("unassigned", "Unassigned", tickets.filter(t => !t.tech_id).length)}
-          {tabButton("overdue", "Overdue", tickets.filter(t => isOverdue(t)).length)}
-          {tabButton("due_today", "Due Today", tickets.filter(t => isDueWithin(t, 24)).length)}
+          {tabButton("all", "All", ticketsForTabCounts.length)}
+          {isAdminOrTech && tabButton("mine", "My Tickets", ticketsForTabCounts.filter(t => t.tech_id === currentUserIdNum).length)}
+          {isAdminOrTech && tabButton("unassigned", "Unassigned", ticketsForTabCounts.filter(t => !t.tech_id).length)}
+          {tabButton("overdue", "Overdue", ticketsForTabCounts.filter(t => isOverdue(t)).length)}
+          {tabButton("due_today", "Due Today", ticketsForTabCounts.filter(t => isDueWithin(t, 24)).length)}
         </div>
 
         {/* Search + column filters */}
