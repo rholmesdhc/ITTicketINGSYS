@@ -46,7 +46,7 @@ def _wrap_html(heading: str, body_html: str, ticket_id: int) -> str:
     return f"""
     <div style="font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 560px; margin: 0 auto;">
       <div style="background: {ACCENT}; color: #ffffff; padding: 20px 24px; border-radius: 8px 8px 0 0;">
-        <strong style="font-size: 18px;">Clinical IT Portal</strong>
+        <strong style="font-size: 18px;">IT Helpdesk Portal</strong>
       </div>
       <div style="border: 1px solid #e2e8f0; border-top: none; padding: 24px; border-radius: 0 0 8px 8px;">
         <h2 style="margin-top: 0; color: #1e293b;">{heading}</h2>
@@ -54,7 +54,7 @@ def _wrap_html(heading: str, body_html: str, ticket_id: int) -> str:
         <a href="{url}" style="display: inline-block; margin-top: 20px; background: {ACCENT}; color: #ffffff; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-weight: 600;">View Ticket #{ticket_id}</a>
       </div>
       <p style="color: #94a3b8; font-size: 12px; margin-top: 16px;">
-        This is an automated message from the Delta Health Center Clinical IT Portal. Please don't reply directly to this email.
+        This is an automated message from the Delta Health Center IT Helpdesk Portal. Please don't reply directly to this email.
       </p>
     </div>
     """

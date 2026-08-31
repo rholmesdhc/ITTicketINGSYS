@@ -24,7 +24,7 @@ type Step = {
 const REQUESTER_STEPS: Step[] = [
   {
     icon: "👋",
-    title: "Welcome to the Clinical IT Portal",
+    title: "Welcome to the IT Helpdesk Portal",
     body: "This quick guide walks through how to file and track IT support tickets, highlighting each part of the screen as we go. Skip anytime, or reopen it later from the Help button.",
   },
   {

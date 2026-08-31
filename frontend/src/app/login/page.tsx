@@ -121,7 +121,7 @@ export default function Login() {
             className="h-16 w-auto mx-auto mb-4"
             preload
           />
-          <h1 className="text-3xl font-bold text-medical-dark dark:text-medical-light">Clinical IT Portal</h1>
+          <h1 className="text-3xl font-bold text-medical-dark dark:text-medical-light">IT Helpdesk Portal</h1>
           <p className="text-slate-500 dark:text-slate-400 mt-2">Sign in to manage support tickets</p>
         </div>
 
