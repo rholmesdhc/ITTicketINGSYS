@@ -137,6 +137,14 @@ class Ticket(Base):
     # technicians find these instead of trusting an unreviewed guess.
     # Cleared the moment a technician/admin sets priority explicitly.
     priority_needs_review = Column(Boolean, default=False, nullable=False)
+    # Generated filename (a UUID, never the uploader's original filename -
+    # avoids collisions and path-traversal from untrusted input) of the
+    # ticket's attached screenshot, stored on disk under
+    # SCREENSHOT_UPLOAD_DIR (see main.py) - not a DB blob, matching how
+    # this app already keeps other large/binary data (the CSV seed file)
+    # off the database. One per ticket - a re-upload replaces this file
+    # and overwrites this path, it doesn't append.
+    screenshot_path = Column(String, nullable=True)
 
     requester = relationship("User", back_populates="tickets_submitted", foreign_keys=[requester_id])
     technician = relationship("User", back_populates="tickets_assigned", foreign_keys=[tech_id])

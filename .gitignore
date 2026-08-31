@@ -33,3 +33,8 @@ out/
 # must never be committed.
 backend/seed_log.txt
 backend/data/*.csv
+
+# Ticket screenshot attachments - local dev storage (SCREENSHOT_UPLOAD_DIR
+# default), same treatment as the seed CSV above. UAT uses a named Docker
+# volume instead (docker-compose.uat.yml), not this directory.
+backend/uploads/

@@ -145,6 +145,10 @@ class TicketResponse(BaseModel):
     clinic_site_id: Optional[int]
     technician_note: Optional[str] = None
     resolution: Optional[str] = None
+    # Opaque - the frontend only needs to know whether one exists (to show
+    # "Attach" vs "Replace") and can GET /tickets/{id}/screenshot for the
+    # image itself; this isn't a usable path on its own from the client.
+    screenshot_path: Optional[str] = None
 
     class Config:
         from_attributes = True

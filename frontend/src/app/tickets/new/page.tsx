@@ -150,6 +150,20 @@ export default function NewTicket() {
   const [dismissedDuplicateWarning, setDismissedDuplicateWarning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [createdTicket, setCreatedTicket] = useState<CreatedTicket | null>(null);
+  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
+  const [screenshotUploadError, setScreenshotUploadError] = useState("");
+  const [screenshotPreviewUrl, setScreenshotPreviewUrl] = useState<string | null>(null);
+
+  // Creates/revokes the preview object URL exactly once per file change,
+  // instead of calling createObjectURL() inline in JSX on every render -
+  // that would mint a new URL each render without ever revoking the
+  // previous ones (a real leak, not just a style nit).
+  useEffect(() => {
+    if (!screenshotFile) { setScreenshotPreviewUrl(null); return; }
+    const url = URL.createObjectURL(screenshotFile);
+    setScreenshotPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [screenshotFile]);
 
   useEffect(() => {
     setRole(localStorage.getItem("role"));
@@ -206,6 +220,8 @@ export default function NewTicket() {
     setAffectedUserId(null);
     setDismissedDuplicateWarning(false);
     setCreatedTicket(null);
+    setScreenshotFile(null);
+    setScreenshotUploadError("");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -235,6 +251,29 @@ export default function NewTicket() {
       if (res.ok) {
         const data = await res.json();
         setCreatedTicket({ id: data.id, status: data.status, priority: data.priority, sla_deadline: data.sla_deadline });
+
+        // Screenshot upload is a separate follow-up request (ticket
+        // creation itself stays plain JSON) - a failure here doesn't
+        // undo or hide the ticket that was already successfully created,
+        // it just surfaces a small non-blocking note instead of making
+        // the whole submission look like it failed.
+        if (screenshotFile) {
+          try {
+            const formDataUpload = new FormData();
+            formDataUpload.append("file", screenshotFile);
+            const uploadRes = await fetch(`${API_BASE_URL}/tickets/${data.id}/screenshot`, {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${token}` },
+              body: formDataUpload
+            });
+            if (!uploadRes.ok) {
+              const errBody = await uploadRes.json().catch(() => null);
+              setScreenshotUploadError(errBody?.detail || "Screenshot upload failed - you can retry from the ticket page.");
+            }
+          } catch (e) {
+            setScreenshotUploadError("Screenshot upload failed - you can retry from the ticket page.");
+          }
+        }
       } else {
         alert("Failed to submit ticket.");
       }
@@ -248,7 +287,7 @@ export default function NewTicket() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
       <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
-        <h1 className="text-xl font-bold">Clinical IT Portal</h1>
+        <h1 className="text-xl font-bold">IT Helpdesk Portal</h1>
         <div className="flex items-center gap-4">
           <ThemeToggle />
           <Link href="/dashboard" className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors">
@@ -270,6 +309,11 @@ export default function NewTicket() {
             <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">
               You can track its status anytime from your dashboard or the link below.
             </p>
+            {screenshotUploadError && (
+              <p className="text-amber-700 dark:text-amber-400 text-sm mb-6 bg-amber-50 dark:bg-amber-900/30 border-l-4 border-amber-500 p-3 rounded-r text-left">
+                {screenshotUploadError}
+              </p>
+            )}
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <Link
                 href={`/tickets/${createdTicket.id}`}
@@ -408,6 +452,22 @@ export default function NewTicket() {
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Detailed Description</label>
                   <textarea required rows={4} className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none"
                             value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})}></textarea>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Screenshot (Optional)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={e => setScreenshotFile(e.target.files?.[0] || null)}
+                    className="w-full text-sm text-slate-600 dark:text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-medical-blue file:text-white file:font-semibold file:cursor-pointer hover:file:bg-medical-dark cursor-pointer"
+                  />
+                  {screenshotFile && screenshotPreviewUrl && (
+                    <div className="mt-2 flex items-center gap-3">
+                      <img src={screenshotPreviewUrl} alt="Screenshot preview" className="h-16 w-16 object-cover rounded-lg border border-slate-200 dark:border-slate-600" />
+                      <span className="text-xs text-slate-500 dark:text-slate-400">{screenshotFile.name} - resized to fit 1024x1024 if larger</span>
+                    </div>
+                  )}
                 </div>
 
                 <button type="submit" disabled={submitting} className="mt-4 bg-medical-blue hover:bg-medical-dark disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-colors cursor-pointer">

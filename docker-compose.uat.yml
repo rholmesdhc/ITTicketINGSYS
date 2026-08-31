@@ -50,6 +50,11 @@ services:
       # touches git - copy it onto the box once, seed_users.py reads it
       # from here. See .env.uat.example for SEED_DATA_DIR.
       - ${SEED_DATA_DIR:-/opt/it-ticketing/data}:/app/data:ro
+      # Ticket screenshot attachments - a named volume (not a bind mount
+      # like the seed data above) since nothing needs to pre-populate it
+      # from the host; Docker manages it. Read-write, unlike the seed
+      # mount - the backend writes new uploads here at runtime.
+      - screenshot_uploads:/app/uploads
 
   frontend:
     image: ghcr.io/${GHCR_OWNER}/it-ticketing-frontend:${TAG:-uat-latest}
@@ -103,3 +108,4 @@ services:
 volumes:
   postgres_data:
   caddy_data:
+  screenshot_uploads:

@@ -2,11 +2,15 @@ import os
 from dotenv import load_dotenv
 load_dotenv()  # must run before entra_auth is imported - it reads ENTRA_* env vars at module load time
 
+import io
+import uuid
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import timedelta, datetime
+from PIL import Image, UnidentifiedImageError
 import models, schemas, auth, entra_auth, notifications, triage
 from mailer import send_mail
 from database import get_db
@@ -32,6 +36,18 @@ cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3005").split(",")
 # separately-hosted classifier, not part of this app's own deployment.
 TRIAGE_API_URL = os.getenv("TRIAGE_API_URL", "")
 TRIAGE_API_KEY = os.getenv("TRIAGE_API_KEY", "")
+
+# Ticket screenshot attachments - stored on disk (a mounted volume in
+# docker-compose.uat.yml), not as DB blobs, same treatment this app already
+# gives other large/binary data (the CSV seed file). See
+# POST/GET /tickets/{id}/screenshot below.
+SCREENSHOT_UPLOAD_DIR = os.getenv("SCREENSHOT_UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "uploads"))
+os.makedirs(SCREENSHOT_UPLOAD_DIR, exist_ok=True)
+SCREENSHOT_MAX_DIMENSION = 1024
+# The pixel-dimension cap above doesn't bound file size on its own (a
+# 1024x1024 PNG can still be several MB) - a practical guardrail, not
+# something specifically requested.
+SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in cors_origins],
@@ -445,6 +461,71 @@ def read_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: mod
     ):
         raise HTTPException(status_code=404, detail="Ticket not found")
     return db_ticket
+
+@app.post("/tickets/{ticket_id}/screenshot", response_model=schemas.TicketResponse)
+async def upload_ticket_screenshot(ticket_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    db_ticket = db.query(models.Ticket).filter(models.Ticket.id == ticket_id).first()
+    # Broader than update_ticket's staff-only gate below - the ticket's own
+    # requester can attach supplementary evidence to their own ticket
+    # without needing a technician to do it on their behalf. Same 404
+    # (not 403)/visibility pattern as read_ticket for anyone else's ticket.
+    if not db_ticket or (
+        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+    ):
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    raw = await file.read()
+    if len(raw) > SCREENSHOT_MAX_BYTES:
+        raise HTTPException(status_code=400, detail=f"Image too large - max {SCREENSHOT_MAX_BYTES // (1024*1024)}MB")
+
+    try:
+        # verify() confirms it's a real, non-corrupt image (not just an
+        # extension/MIME-type claim) but leaves the object unusable
+        # afterward, so re-open before actually working with it.
+        Image.open(io.BytesIO(raw)).verify()
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(status_code=400, detail="File is not a valid image")
+
+    # In-place downscale preserving aspect ratio - a no-op if already
+    # within bounds, never upscales.
+    img.thumbnail((SCREENSHOT_MAX_DIMENSION, SCREENSHOT_MAX_DIMENSION))
+    # Normalized to PNG on save regardless of upload format - sidesteps
+    # format-specific save quirks (e.g. JPEG not supporting alpha).
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGBA")
+
+    # Replace-not-append (one screenshot per ticket) - remove the old file
+    # before writing the new one so a replaced screenshot doesn't leave an
+    # orphaned file behind on disk.
+    if db_ticket.screenshot_path:
+        old_path = os.path.join(SCREENSHOT_UPLOAD_DIR, db_ticket.screenshot_path)
+        if os.path.exists(old_path):
+            os.remove(old_path)
+
+    filename = f"{uuid.uuid4().hex}.png"
+    img.save(os.path.join(SCREENSHOT_UPLOAD_DIR, filename), format="PNG")
+    db_ticket.screenshot_path = filename
+    db.commit()
+    db.refresh(db_ticket)
+    return db_ticket
+
+@app.get("/tickets/{ticket_id}/screenshot")
+def read_ticket_screenshot(ticket_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    db_ticket = db.query(models.Ticket).filter(models.Ticket.id == ticket_id).first()
+    # Same visibility rule as read_ticket - viewing the attachment follows
+    # the same rules as viewing the ticket itself.
+    if not db_ticket or (
+        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+    ):
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not db_ticket.screenshot_path:
+        raise HTTPException(status_code=404, detail="This ticket has no screenshot attached")
+    file_path = os.path.join(SCREENSHOT_UPLOAD_DIR, db_ticket.screenshot_path)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Screenshot file is missing")
+    return FileResponse(file_path, media_type="image/png")
 
 @app.patch("/tickets/{ticket_id}", response_model=schemas.TicketResponse)
 def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):

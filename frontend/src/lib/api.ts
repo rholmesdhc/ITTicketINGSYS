@@ -42,6 +42,33 @@ export function updateUserPreferences(prefs: Record<string, unknown>) {
 }
 
 /**
+ * Fetches a ticket's screenshot as a blob: object URL for use as an <img
+ * src>. Needed because this app authenticates via a Bearer token read from
+ * localStorage, not cookies - a plain <img src="{API_BASE_URL}/tickets/5/screenshot">
+ * would hit the backend with no auth header at all and silently 401
+ * instead of rendering. Returns null if the ticket has no screenshot (404)
+ * or the fetch fails.
+ *
+ * Caller owns the returned URL's lifetime - call URL.revokeObjectURL(url)
+ * when done with it (e.g. on unmount, or before fetching a replacement) to
+ * avoid leaking blob memory.
+ */
+export async function fetchTicketScreenshotUrl(ticketId: number): Promise<string | null> {
+  const token = localStorage.getItem("token");
+  if (!token) return null;
+  try {
+    const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}/screenshot`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * A 401 means the JWT expired or is invalid (access tokens last 60 minutes
  * - see backend/auth.py). Without this, pages were silently rendering
  * empty/stale data on every failed fetch with no indication why. Call this

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { API_BASE_URL, isUnauthorized } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized, fetchTicketScreenshotUrl } from "@/lib/api";
 import EmployeeEmailSelect from "@/components/EmployeeEmailSelect";
 import ThemeToggle from "@/components/ThemeToggle";
 
@@ -22,6 +22,9 @@ export default function TicketDetail() {
   const [resolutionDraft, setResolutionDraft] = useState("");
   const [reopening, setReopening] = useState(false);
   const [requireResolution, setRequireResolution] = useState(false);
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
+  const [screenshotUploading, setScreenshotUploading] = useState(false);
+  const [screenshotError, setScreenshotError] = useState("");
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -149,6 +152,51 @@ export default function TicketDetail() {
 
   const handleClinicSiteChange = (clinicSiteId: number | null) => patchTicket({ clinic_site_id: clinicSiteId }, "clinic site");
 
+  // Loads the attached screenshot (if any) whenever the ticket data
+  // refreshes and its screenshot_path actually changes - avoids
+  // re-fetching the same image on every unrelated ticket update (e.g. a
+  // status change), and revokes the previous object URL before creating a
+  // new one so replacing a screenshot doesn't leak the old blob.
+  useEffect(() => {
+    let currentUrl: string | null = null;
+    if (ticket?.screenshot_path) {
+      fetchTicketScreenshotUrl(ticket.id).then(url => {
+        currentUrl = url;
+        setScreenshotUrl(url);
+      });
+    } else {
+      setScreenshotUrl(null);
+    }
+    return () => { if (currentUrl) URL.revokeObjectURL(currentUrl); };
+  }, [ticket?.id, ticket?.screenshot_path]);
+
+  const handleScreenshotUpload = async (file: File) => {
+    setScreenshotUploading(true);
+    setScreenshotError("");
+    const token = localStorage.getItem("token");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${API_BASE_URL}/tickets/${id}/screenshot`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` },
+        body: formData
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok) {
+        const updated = await res.json();
+        setTicket(updated); // triggers the effect above to reload the new image
+      } else {
+        const body = await res.json().catch(() => null);
+        setScreenshotError(body?.detail || "Upload failed");
+      }
+    } catch (e) {
+      setScreenshotError("Upload failed - check your connection");
+    } finally {
+      setScreenshotUploading(false);
+    }
+  };
+
   const handleAssignToMe = () => patchTicket({ tech_id: parseInt(userId as string) }, "assignment");
 
   // Saves on blur (not per-keystroke) - a free-text field auto-saving on
@@ -205,7 +253,7 @@ export default function TicketDetail() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
       <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
-        <h1 className="text-xl font-bold">Clinical IT Portal</h1>
+        <h1 className="text-xl font-bold">IT Helpdesk Portal</h1>
         <div className="flex items-center gap-4">
           <ThemeToggle />
           <Link href="/dashboard" className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors">
@@ -299,6 +347,36 @@ export default function TicketDetail() {
                   {ticket.sla_deadline ? new Date(ticket.sla_deadline).toLocaleString() : "No Deadline"}
                 </div>
               </div>
+            </div>
+
+            {/* Upload permission mirrors read-visibility exactly (the
+                ticket's own requester, or staff) - if this page loaded at
+                all, the current viewer already qualifies, so no extra
+                frontend gate is needed beyond what the backend enforces. */}
+            <div className="mb-8">
+              <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Screenshot</h3>
+              {screenshotUrl ? (
+                <div className="flex items-start gap-4">
+                  <a href={screenshotUrl} target="_blank" rel="noopener noreferrer">
+                    <img src={screenshotUrl} alt="Ticket screenshot" className="max-h-48 rounded-lg border border-slate-200 dark:border-slate-600 hover:opacity-90 transition-opacity" />
+                  </a>
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Click to view full size</p>
+                    <label className="text-sm text-medical-blue dark:text-medical-accent hover:underline cursor-pointer font-semibold">
+                      {screenshotUploading ? "Uploading..." : "Replace"}
+                      <input type="file" accept="image/*" className="hidden" disabled={screenshotUploading}
+                             onChange={e => { const f = e.target.files?.[0]; if (f) handleScreenshotUpload(f); }} />
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                <label className="inline-flex items-center gap-2 text-sm bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 px-4 py-2 rounded-lg shadow-sm cursor-pointer font-semibold">
+                  {screenshotUploading ? "Uploading..." : "📎 Attach Screenshot"}
+                  <input type="file" accept="image/*" className="hidden" disabled={screenshotUploading}
+                         onChange={e => { const f = e.target.files?.[0]; if (f) handleScreenshotUpload(f); }} />
+                </label>
+              )}
+              {screenshotError && <p className="text-sm text-red-600 dark:text-red-400 mt-2">{screenshotError}</p>}
             </div>
 
             {/* Distinct from the note box below: this is the permanent
