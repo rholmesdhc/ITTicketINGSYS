@@ -1,10 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { API_BASE_URL, isUnauthorized, logout } from "@/lib/api";
+import { API_BASE_URL, isUnauthorized } from "@/lib/api";
 import OnboardingWizard from "@/components/OnboardingWizard";
-import ThemeToggle from "@/components/ThemeToggle";
+import Sidebar from "@/components/Sidebar";
 
 export default function UserManagement() {
   const router = useRouter();
@@ -215,34 +214,9 @@ export default function UserManagement() {
   if (role !== "admin") return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
-      <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
-        <div className="flex items-center gap-6">
-          <h1 className="text-xl font-bold">IT Helpdesk Portal</h1>
-          <Link href="/dashboard" className="text-sm font-semibold hover:text-medical-light transition-colors">
-            Dashboard
-          </Link>
-          <Link href="/settings" className="text-sm font-semibold hover:text-medical-light transition-colors">
-            Admin Settings
-          </Link>
-        </div>
-        <div className="flex items-center gap-4">
-          <ThemeToggle />
-          <button
-            onClick={() => setIsWizardOpen(true)}
-            className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
-          >
-            ? Help
-          </button>
-          <button
-            onClick={async () => { await logout(); router.push("/login"); }}
-            className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors cursor-pointer"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
-
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex">
+      <Sidebar role={role} onHelpClick={() => setIsWizardOpen(true)} />
+      <div className="flex-1 flex flex-col min-w-0 pt-14 md:pt-0">
       <OnboardingWizard isOpen={isWizardOpen} onClose={() => setIsWizardOpen(false)} role={role} />
 
       <main className="max-w-7xl mx-auto p-10 w-full flex-1">
@@ -470,6 +444,7 @@ export default function UserManagement() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import { API_BASE_URL, isUnauthorized, fetchTicketScreenshotUrl } from "@/lib/api";
+import { formatPhoneInput } from "@/lib/phoneFormat";
 import EmployeeEmailSelect from "@/components/EmployeeEmailSelect";
-import ThemeToggle from "@/components/ThemeToggle";
+import Sidebar from "@/components/Sidebar";
 
 type SaveStatus = { state: "idle" | "saving" | "saved" | "error"; message?: string };
 
@@ -20,6 +20,7 @@ export default function TicketDetail() {
   const saveIdRef = useRef(0);
   const [noteDraft, setNoteDraft] = useState("");
   const [resolutionDraft, setResolutionDraft] = useState("");
+  const [contactPhoneDraft, setContactPhoneDraft] = useState("");
   const [reopening, setReopening] = useState(false);
   const [requireResolution, setRequireResolution] = useState(false);
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
@@ -93,6 +94,7 @@ export default function TicketDetail() {
   useEffect(() => {
     setNoteDraft(ticket?.technician_note || "");
     setResolutionDraft(ticket?.resolution || "");
+    setContactPhoneDraft(ticket?.contact_phone || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket?.id]);
 
@@ -102,12 +104,17 @@ export default function TicketDetail() {
   // save" indicator so a silent failure (expired session, dropped network)
   // is never mistaken for a successful save. `saveIdRef` guards against a
   // fast second edit clearing the "Saved" toast for a still-in-flight one.
-  const patchTicket = async (body: Record<string, unknown>, label: string): Promise<boolean> => {
+  // `endpointSuffix` lets this same helper drive dedicated sub-resource
+  // endpoints (e.g. /tickets/{id}/contact-phone) that exist because they
+  // need a broader permission check than this plain PATCH /tickets/{id}
+  // (staff-only, enforced server-side) - same save/toast/error handling
+  // either way, just a different URL.
+  const patchTicket = async (body: Record<string, unknown>, label: string, endpointSuffix: string = ""): Promise<boolean> => {
     const myId = ++saveIdRef.current;
     const token = localStorage.getItem("token");
     setSaveStatus({ state: "saving", message: `Saving ${label}...` });
     try {
-      const res = await fetch(`${API_BASE_URL}/tickets/${ticket.id}`, {
+      const res = await fetch(`${API_BASE_URL}/tickets/${ticket.id}${endpointSuffix}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -213,6 +220,12 @@ export default function TicketDetail() {
     }
   };
 
+  const handleContactPhoneBlur = () => {
+    if (contactPhoneDraft !== (ticket.contact_phone || "")) {
+      patchTicket({ contact_phone: contactPhoneDraft || null }, "contact phone", "/contact-phone");
+    }
+  };
+
   // "This didn't fix it" - sends the ticket back into the active queue.
   // Backend restricts this to the requester who filed it or staff, and
   // only while it's actually resolved.
@@ -251,17 +264,9 @@ export default function TicketDetail() {
   const clinicSiteName = clinicSites.find((s: any) => s.id === effectiveClinicSiteId)?.name;
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
-      <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
-        <h1 className="text-xl font-bold">IT Helpdesk Portal</h1>
-        <div className="flex items-center gap-4">
-          <ThemeToggle />
-          <Link href="/dashboard" className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors">
-            Back to Dashboard
-          </Link>
-        </div>
-      </header>
-
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex">
+      <Sidebar role={role} />
+      <div className="flex-1 flex flex-col min-w-0 pt-14 md:pt-0">
       <main className="max-w-4xl mx-auto p-10 w-full flex-1">
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
           <div className="bg-slate-100 dark:bg-slate-700 p-6 border-b border-slate-200 dark:border-slate-600 flex justify-between items-center">
@@ -337,6 +342,32 @@ export default function TicketDetail() {
                       : "Same as requester"}
                   </p>
                 )}
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
+                  Preferred Contact Phone <span className="normal-case font-normal text-slate-400 dark:text-slate-500">(Optional)</span>
+                </h3>
+                {/* Editable by either the requester or staff (matches the
+                    backend's PATCH /tickets/{id}/contact-phone permission) -
+                    unlike Clinic Site/Affected Employee above, this isn't
+                    staff-only, so it's always an input, not a read-only
+                    fallback. Separate from the requester's own profile
+                    phone number - the best way to reach them about THIS
+                    issue (a cell number, a front-desk extension) isn't
+                    always the same thing. formatPhoneInput live-formats a
+                    standard 10-digit number into (XXX) XXX-XXXX as typed,
+                    without touching an extension or a non-US number typed
+                    after it - see its own comment for why this is a soft
+                    mask, not a strict one. */}
+                <input
+                  type="tel"
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-lg font-medium focus:ring-2 focus:ring-medical-accent focus:outline-none"
+                  value={contactPhoneDraft}
+                  onChange={(e) => setContactPhoneDraft(formatPhoneInput(e.target.value))}
+                  onBlur={handleContactPhoneBlur}
+                  placeholder="e.g. (662) 555-1234 x205"
+                  maxLength={30}
+                />
               </div>
             </div>
 
@@ -505,6 +536,7 @@ export default function TicketDetail() {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

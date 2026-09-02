@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_BASE_URL, isUnauthorized } from "@/lib/api";
 import EmployeeEmailSelect from "@/components/EmployeeEmailSelect";
-import ThemeToggle from "@/components/ThemeToggle";
+import Sidebar from "@/components/Sidebar";
 
 // Fallback only for if /categories can't be reached - keep in sync with
 // TICKET_CATEGORIES in backend/schemas.py, which is the actual source of
@@ -285,17 +285,9 @@ export default function NewTicket() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col">
-      <header className="bg-medical-blue text-white p-4 shadow-md flex flex-wrap items-center justify-between gap-y-2 gap-x-4 px-4 sm:px-10">
-        <h1 className="text-xl font-bold">IT Helpdesk Portal</h1>
-        <div className="flex items-center gap-4">
-          <ThemeToggle />
-          <Link href="/dashboard" className="text-sm border border-white px-3 py-1 rounded hover:bg-medical-dark transition-colors">
-            Back to Dashboard
-          </Link>
-        </div>
-      </header>
-
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex">
+      <Sidebar role={role} />
+      <div className="flex-1 flex flex-col min-w-0 pt-14 md:pt-0">
       <main className="max-w-3xl mx-auto p-10 w-full">
         {createdTicket ? (
           <div className="bg-white dark:bg-slate-800 p-10 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 text-center">
@@ -478,6 +470,7 @@ export default function NewTicket() {
           </>
         )}
       </main>
+      </div>
     </div>
   );
 }

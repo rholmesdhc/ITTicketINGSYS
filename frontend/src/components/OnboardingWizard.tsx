@@ -33,8 +33,9 @@ const REQUESTER_STEPS: Step[] = [
     targetId: "new-ticket-button",
     body: (
       <>
-        Click <strong>+ New Ticket</strong> to report an issue. Pick a category and priority (P1
-        is critical patient-care impact, P4 is a general inquiry) - each priority sets an SLA
+        Hover over <strong>Tickets</strong> in the sidebar and click <strong>New Ticket</strong> to
+        report an issue. Pick a category and priority (P1 is critical patient-care impact, P4 is a
+        general inquiry) - each priority sets an SLA
         deadline automatically. If you're reporting on behalf of a coworker, use the{" "}
         <strong>Affected Employee</strong> field to search them by name or email.
         <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-900/30 border-l-4 border-amber-500 text-amber-800 dark:text-amber-300 text-sm rounded-r">
@@ -48,7 +49,7 @@ const REQUESTER_STEPS: Step[] = [
     icon: "📊",
     title: "Your Dashboard",
     targetId: "kpi-cards",
-    body: "These cards summarize your tickets, with a small arrow showing the trend vs. last week. Click any ticket's title in the table below to see its full details and SLA countdown.",
+    body: "These cards summarize your tickets, with a small arrow showing the trend vs. last week. Head to Tickets in the sidebar to see the full list - click any ticket's title there for its full details and SLA countdown.",
   },
   {
     icon: "🔍",
@@ -91,7 +92,7 @@ const TECH_STEPS: Step[] = [
     icon: "📈",
     title: "Reporting",
     targetId: "export-csv",
-    body: "The Technician Workload panel further up shows each tech's active ticket count and flags anyone overloaded. This Export CSV button grabs whatever's currently filtered/searched for reporting elsewhere.",
+    body: "The Technician Workload panel on the Dashboard shows each tech's active ticket count and flags anyone overloaded. This Export CSV button grabs whatever's currently filtered/searched for reporting elsewhere.",
   },
 ];
 
@@ -107,7 +108,7 @@ const ADMIN_STEPS: Step[] = [
 const CLOSING_STEP: Step = {
   icon: "✅",
   title: "You're All Set",
-  body: "That's the core workflow. Click the Help button in the header anytime to replay this guide.",
+  body: "That's the core workflow. Click Help in the sidebar anytime to replay this guide.",
 };
 
 function buildSteps(role: string | null): Step[] {
@@ -141,7 +142,14 @@ export default function OnboardingWizard({ isOpen, onClose, role }: Props) {
       return;
     }
     const el = document.querySelector(`[data-tour="${step.targetId}"]`) as HTMLElement | null;
-    if (!el) {
+    // Zero-size counts the same as "not found" - the sidebar now renders a
+    // desktop copy and a mobile-drawer copy of the same data-tour ids, and
+    // querySelector only ever returns the first match regardless of which
+    // one is actually visible at the current viewport width. Without this
+    // check, a match that's display:none on the current breakpoint would
+    // resolve to an all-zero rect and spotlight an empty point on the
+    // screen instead of falling back to the plain centered card below.
+    if (!el || (el.getBoundingClientRect().width === 0 && el.getBoundingClientRect().height === 0)) {
       setTargetRect(null);
       return;
     }
