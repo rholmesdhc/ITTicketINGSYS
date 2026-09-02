@@ -527,6 +527,34 @@ def read_ticket_screenshot(ticket_id: int, db: Session = Depends(get_db), curren
         raise HTTPException(status_code=404, detail="Screenshot file is missing")
     return FileResponse(file_path, media_type="image/png")
 
+CONTACT_PHONE_MAX_LENGTH = 30
+
+@app.patch("/tickets/{ticket_id}/contact-phone", response_model=schemas.TicketResponse)
+def update_ticket_contact_phone(ticket_id: int, body: schemas.TicketContactPhoneUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    db_ticket = db.query(models.Ticket).filter(models.Ticket.id == ticket_id).first()
+    # Broader than update_ticket's staff-only gate below - same reasoning as
+    # the screenshot endpoints: the ticket's own requester needs to be able
+    # to set the best number to reach them about THIS issue without going
+    # through a technician. Same 404 (not 403)/visibility pattern.
+    if not db_ticket or (
+        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+    ):
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    # Deliberately no format/digit-only regex - real values here include
+    # extensions ("662-555-1234 x205"), and international/front-desk
+    # formats a strict US-style pattern would wrongly reject. Just trim and
+    # cap length as a sanity guard, and normalize "" to None like the other
+    # optional free-text fields on this ticket (technician_note, resolution).
+    phone = (body.contact_phone or "").strip() or None
+    if phone and len(phone) > CONTACT_PHONE_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Phone number too long - max {CONTACT_PHONE_MAX_LENGTH} characters")
+
+    db_ticket.contact_phone = phone
+    db.commit()
+    db.refresh(db_ticket)
+    return db_ticket
+
 @app.patch("/tickets/{ticket_id}", response_model=schemas.TicketResponse)
 def update_ticket(ticket_id: int, ticket_update: schemas.TicketUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     # Only Technicians and Admins can update tickets

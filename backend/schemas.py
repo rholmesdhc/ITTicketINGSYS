@@ -127,6 +127,12 @@ class TicketUpdate(BaseModel):
     technician_note: Optional[str] = None
     resolution: Optional[str] = None
 
+# Its own schema/endpoint (see PATCH /tickets/{id}/contact-phone in main.py)
+# rather than a field on TicketUpdate above - that endpoint is staff-only,
+# and the ticket's own requester needs to be able to set this too.
+class TicketContactPhoneUpdate(BaseModel):
+    contact_phone: Optional[str] = None
+
 class TicketResponse(BaseModel):
     id: int
     title: str
@@ -149,6 +155,8 @@ class TicketResponse(BaseModel):
     # "Attach" vs "Replace") and can GET /tickets/{id}/screenshot for the
     # image itself; this isn't a usable path on its own from the client.
     screenshot_path: Optional[str] = None
+    # Per-ticket preferred contact number - see models.Ticket.contact_phone.
+    contact_phone: Optional[str] = None
 
     class Config:
         from_attributes = True

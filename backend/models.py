@@ -145,6 +145,14 @@ class Ticket(Base):
     # off the database. One per ticket - a re-upload replaces this file
     # and overwrites this path, it doesn't append.
     screenshot_path = Column(String, nullable=True)
+    # Per-TICKET preferred contact number, distinct from the requester's
+    # profile User.phone_number - "best way to reach someone about this
+    # specific issue" (their cell today, a front-desk extension, etc.) isn't
+    # always the same as their on-file directory number, and shouldn't
+    # silently overwrite it. Editable by the requester themselves or staff
+    # (see the dedicated PATCH endpoint in main.py - deliberately not folded
+    # into update_ticket, which is staff-only).
+    contact_phone = Column(String, nullable=True)
 
     requester = relationship("User", back_populates="tickets_submitted", foreign_keys=[requester_id])
     technician = relationship("User", back_populates="tickets_assigned", foreign_keys=[tech_id])
