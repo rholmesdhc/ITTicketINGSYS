@@ -302,9 +302,17 @@ export default function Sidebar({ role, onHelpClick }: Props) {
         {renderNavBody(false, false)}
       </nav>
 
-      {/* Desktop sidebar - unchanged from before, in-flow, collapsible. */}
+      {/* Desktop sidebar - unchanged from before, in-flow, collapsible.
+          z-30 on the nav itself, not just the flyout inside it - a sticky
+          element establishes its own local stacking context, so the
+          flyout's z-30 was only ever being compared against other things
+          inside this <nav>, never against the page's main content sitting
+          right next to it. Without a z-index here, the nav (and everything
+          inside it, flyout included) painted at its plain DOM-order
+          position - which loses to main content, since that div comes
+          later in the page's markup. */}
       <nav
-        className={`hidden md:flex shrink-0 bg-medical-dark text-white flex-col h-screen sticky top-0 transition-[width] duration-150 ${
+        className={`hidden md:flex shrink-0 bg-medical-dark text-white flex-col h-screen sticky top-0 z-30 transition-[width] duration-150 ${
           collapsed ? "w-16" : "w-60"
         }`}
         aria-label="Main navigation"
