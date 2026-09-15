@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -34,6 +34,15 @@ type FlyoutChild = { href: string; label: string; active: boolean; dataTour?: st
  * not the only way in. On a touch device there's no hover at all, so
  * tapping the parent just navigates - the same graceful fallback WP's own
  * mobile admin relies on for this exact pattern.
+ *
+ * Closing is delayed (not instant on mouseleave) - the trigger's own hit
+ * box doesn't cover the small horizontal gap before the flyout, or the
+ * extra height the flyout occupies below the trigger's single row, so a
+ * real mouse moving diagonally toward a lower item (e.g. "New Ticket")
+ * crosses that dead zone and would otherwise close the menu before
+ * arriving. A short grace period, cancelled on re-entering either the
+ * trigger or the flyout, is the standard fix most dropdown/menu libraries
+ * use for exactly this "hover intent" problem.
  */
 function FlyoutNavItem({
   href, icon, label, active, collapsed, dataTour, items,
@@ -41,8 +50,29 @@ function FlyoutNavItem({
   href: string; icon: string; label: string; active: boolean; collapsed: boolean; dataTour?: string; items: FlyoutChild[];
 }) {
   const [open, setOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelClose = () => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const handleEnter = () => {
+    cancelClose();
+    setOpen(true);
+  };
+  const handleLeave = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => setOpen(false), 250);
+  };
+  // Cancel any pending close if this item unmounts mid-timer (route
+  // change closes the mobile drawer, sidebar collapse toggle, etc.) -
+  // otherwise the timeout would call setState on an unmounted component.
+  useEffect(() => () => cancelClose(), []);
+
   return (
-    <div className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <div className="relative" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
       {/* No `title` attribute here - the native OS tooltip it triggers on
           hover would visually collide with the custom flyout below (both
           appear near the cursor at once). aria-label covers the same
