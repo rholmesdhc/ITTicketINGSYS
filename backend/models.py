@@ -20,6 +20,18 @@ class PriorityTier(str, enum.Enum):
     P3 = "P3"
     P4 = "P4" # General Inquiry
 
+# How a ticket actually reached IT, for the cases where a requester didn't
+# just file it themselves online - a technician taking a phone call or a
+# walk-up request wants a quick way to note that, mostly for reporting
+# ("how much of our volume is actually phone-intake") rather than anything
+# that changes ticket handling. Deliberately no "online" option - null
+# means self-filed online, which is the common case and needs no explicit
+# selection.
+class IntakeChannel(str, enum.Enum):
+    call = "call"
+    email = "email"
+    in_person = "in_person"
+
 class AppSettings(Base):
     # Single-row table (see main.py's get_settings/GET+PATCH /settings) -
     # tenant-wide toggles, not per-user preferences. New settings get a
@@ -153,6 +165,13 @@ class Ticket(Base):
     # (see the dedicated PATCH endpoint in main.py - deliberately not folded
     # into update_ticket, which is staff-only).
     contact_phone = Column(String, nullable=True)
+    # Set by staff, not the requester - unlike contact_phone above, this is
+    # folded into the existing staff-only PATCH /tickets/{id} rather than
+    # getting its own broader-permission endpoint, since only a
+    # technician/admin taking a request over the phone/in person actually
+    # has this to report. Null means "requester filed this online
+    # themselves" - the default, common case, not a 4th enum value.
+    intake_channel = Column(Enum(IntakeChannel), nullable=True)
 
     requester = relationship("User", back_populates="tickets_submitted", foreign_keys=[requester_id])
     technician = relationship("User", back_populates="tickets_assigned", foreign_keys=[tech_id])

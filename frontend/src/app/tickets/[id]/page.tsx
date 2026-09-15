@@ -152,6 +152,9 @@ export default function TicketDetail() {
 
   const handleStatusChange = (newStatus: string) => patchTicket({ status: newStatus }, "status");
 
+  // "" maps to null (online/self-filed) - not a 4th select option.
+  const handleIntakeChannelChange = (value: string) => patchTicket({ intake_channel: value || null }, "intake channel");
+
   const handleAffectedUserChange = (affectedUserId: number | null) => {
     if (affectedUserId == null) return; // ignore in-progress typing, only submit on an actual selection
     patchTicket({ affected_user_id: affectedUserId }, "affected employee");
@@ -472,6 +475,25 @@ export default function TicketDetail() {
                         Assign to me
                       </button>
                     )}
+                  </div>
+                  <div>
+                    {/* Staff-set only - unlike Preferred Contact Phone above,
+                        which the requester can also edit. A requester filing
+                        their own ticket obviously did so online; this is for
+                        the tech who took a call or a walk-up request and
+                        filed it on their behalf. Null/blank means "online,
+                        self-filed" - not a 4th option to pick. */}
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Request Came In Via</label>
+                    <select
+                      className="bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 text-sm rounded px-3 py-2 outline-none cursor-pointer focus:ring-2 focus:ring-medical-accent"
+                      value={ticket.intake_channel || ""}
+                      onChange={(e) => handleIntakeChannelChange(e.target.value)}
+                    >
+                      <option value="">Online (self-filed)</option>
+                      <option value="call">Call</option>
+                      <option value="email">Email</option>
+                      <option value="in_person">In Person</option>
+                    </select>
                   </div>
                 </div>
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -126,6 +126,20 @@ class TicketUpdate(BaseModel):
     clinic_site_id: Optional[int] = None
     technician_note: Optional[str] = None
     resolution: Optional[str] = None
+    # How the request actually came in (call/email/in_person) - staff-set,
+    # so it belongs on this staff-only update, unlike contact_phone below.
+    intake_channel: Optional[str] = None
+
+    # Validated here - unlike status/priority above, which aren't (a
+    # pre-existing gap: an invalid value for either hits the Postgres enum
+    # column unvalidated and 500s instead of cleanly 422ing; logged to
+    # docs/TODO.md rather than fixed as a drive-by in this change).
+    @field_validator("intake_channel")
+    @classmethod
+    def validate_intake_channel(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("call", "email", "in_person"):
+            raise ValueError("intake_channel must be one of: call, email, in_person")
+        return v
 
 # Its own schema/endpoint (see PATCH /tickets/{id}/contact-phone in main.py)
 # rather than a field on TicketUpdate above - that endpoint is staff-only,
@@ -157,6 +171,9 @@ class TicketResponse(BaseModel):
     screenshot_path: Optional[str] = None
     # Per-ticket preferred contact number - see models.Ticket.contact_phone.
     contact_phone: Optional[str] = None
+    # How the request came in - see models.Ticket.intake_channel. Null
+    # means the requester filed it online themselves.
+    intake_channel: Optional[str] = None
 
     class Config:
         from_attributes = True
