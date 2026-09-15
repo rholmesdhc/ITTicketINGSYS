@@ -769,28 +769,42 @@ export default function Tickets() {
 
           {/* Quick jump to a specific ticket by number - navigates straight to
               its detail page, distinct from the table search box below (which
-              filters in place). */}
-          <form onSubmit={handleJumpToTicket} className="flex items-center gap-2 mb-6">
-            <div className="relative w-full max-w-xs">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={jumpToTicketQuery}
-                onChange={(e) => { setJumpToTicketQuery(e.target.value); setJumpToTicketError(""); }}
-                placeholder="Jump to ticket #..."
-                aria-label="Jump to ticket by number"
-                className="w-full pl-4 pr-10 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-sm focus:ring-2 focus:ring-medical-accent focus:outline-none"
-              />
-              <button
-                type="submit"
-                aria-label="Go to ticket"
-                className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-medical-blue dark:hover:text-medical-accent cursor-pointer"
-              >
-                →
-              </button>
-            </div>
-            {jumpToTicketError && <span className="text-xs text-red-600 dark:text-red-400">{jumpToTicketError}</span>}
-          </form>
+              filters in place). "+ New Ticket" sits right next to it - the
+              only other way to reach /tickets/new is hovering Tickets in the
+              sidebar, which isn't as discoverable as a button on the page
+              itself (TODO item from Sep 2026). No data-tour id here - the
+              onboarding tour's "Filing a Ticket" step already spotlights the
+              sidebar's own Tickets item, which (unlike this button) exists
+              on every page, not just this one. */}
+          <div className="flex flex-wrap items-center gap-3 mb-6">
+            <form onSubmit={handleJumpToTicket} className="flex items-center gap-2">
+              <div className="relative w-full max-w-xs">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={jumpToTicketQuery}
+                  onChange={(e) => { setJumpToTicketQuery(e.target.value); setJumpToTicketError(""); }}
+                  placeholder="Jump to ticket #..."
+                  aria-label="Jump to ticket by number"
+                  className="w-full pl-4 pr-10 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg text-sm focus:ring-2 focus:ring-medical-accent focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  aria-label="Go to ticket"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-medical-blue dark:hover:text-medical-accent cursor-pointer"
+                >
+                  →
+                </button>
+              </div>
+              {jumpToTicketError && <span className="text-xs text-red-600 dark:text-red-400">{jumpToTicketError}</span>}
+            </form>
+            <Link
+              href="/tickets/new"
+              className="shrink-0 bg-medical-accent hover:bg-medical-blue text-white px-5 py-2 rounded shadow transition-colors font-semibold whitespace-nowrap"
+            >
+              + New Ticket
+            </Link>
+          </div>
 
           {/* Item 19: manual refresh + last-updated, so it's clear the list can
               go stale (e.g. a ticket filed via MCP) and there's a way to fix it
