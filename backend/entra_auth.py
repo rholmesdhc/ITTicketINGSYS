@@ -35,6 +35,11 @@ ENTRA_MCP_CLIENT_ID = os.getenv("ENTRA_MCP_CLIENT_ID", "")  # the MCP server's o
 ENTRA_WEB_APP_CLIENT_ID = os.getenv("ENTRA_WEB_APP_CLIENT_ID", "")  # "IT Ticketing System - Web" - the API the MCP service's token is issued for
 ENTRA_ADMIN_GROUP_ID = os.getenv("ENTRA_ADMIN_GROUP_ID", "")
 ENTRA_TECH_GROUP_ID = os.getenv("ENTRA_TECH_GROUP_ID", "")
+# Drives the "hr" role (see models.RoleEnum) - HR Assistants who submit
+# Employee Onboarding requests, but aren't technicians/admins. Checked after
+# admin/tech below, so someone in both an IT group and this one still gets
+# their IT role, not downgraded to hr.
+ENTRA_HR_GROUP_ID = os.getenv("ENTRA_HR_GROUP_ID", "")
 
 # The app role (see "App roles" on the Web app registration) that must be
 # present on the MCP service's token - proves Entra actually granted it
@@ -94,6 +99,8 @@ def resolve_role_from_groups(group_ids: list[str]) -> str:
         return "admin"
     if ENTRA_TECH_GROUP_ID and ENTRA_TECH_GROUP_ID in group_ids:
         return "technician"
+    if ENTRA_HR_GROUP_ID and ENTRA_HR_GROUP_ID in group_ids:
+        return "hr"
     return "requester"
 
 

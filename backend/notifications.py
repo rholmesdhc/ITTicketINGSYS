@@ -150,6 +150,85 @@ def build_status_changed(ticket: models.Ticket, recipient: models.User, new_stat
     return recipient.email, subject, _wrap_html("Status Update", body_html, ticket.id), text_body
 
 
+def _onboarding_wrap_html(heading: str, body_html: str, url: str) -> str:
+    # Same visual shell as _wrap_html above, but linking to an /onboarding
+    # batch instead of a ticket - onboarding notifications go to configured
+    # OnboardingNotificationRecipient rows (a name + email, not a
+    # models.User), so there's no ticket id to build the CTA link from.
+    return f"""
+    <div style="font-family: -apple-system, Segoe UI, Arial, sans-serif; max-width: 560px; margin: 0 auto;">
+      <div style="background: {ACCENT}; color: #ffffff; padding: 20px 24px; border-radius: 8px 8px 0 0;">
+        <strong style="font-size: 18px;">IT Helpdesk Portal</strong>
+      </div>
+      <div style="border: 1px solid #e2e8f0; border-top: none; padding: 24px; border-radius: 0 0 8px 8px;">
+        <h2 style="margin-top: 0; color: #1e293b;">{heading}</h2>
+        {body_html}
+        <a href="{url}" style="display: inline-block; margin-top: 20px; background: {ACCENT}; color: #ffffff; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-weight: 600;">View Onboarding Request</a>
+      </div>
+      <p style="color: #94a3b8; font-size: 12px; margin-top: 16px;">
+        This is an automated message from the Delta Health Center IT Helpdesk Portal. Please don't reply directly to this email.
+      </p>
+    </div>
+    """
+
+
+def _onboarding_batch_url(batch_id: int) -> str:
+    from mailer import FRONTEND_BASE_URL
+    return f"{FRONTEND_BASE_URL}/onboarding/{batch_id}"
+
+
+def build_onboarding_batch_submitted(recipient_name: str, recipient_email: str, batch: "models.OnboardingBatch", submitted_by: models.User):
+    candidate_rows = "".join(
+        f'<tr><td style="padding:4px 8px 4px 0; color:#1e293b;">{c.first_name} {c.last_name}</td>'
+        f'<td style="padding:4px 8px; color:#64748b;">{c.job_title}</td>'
+        f'<td style="padding:4px 0; color:#64748b;">{c.department} · {c.start_date.strftime("%b %d, %Y")}</td></tr>'
+        for c in batch.candidates
+    )
+    subject = f"New Hire Onboarding: {len(batch.candidates)} candidate(s) submitted by {_display_name(submitted_by)}"
+    body_html = f"""
+      <p>Hi {recipient_name},</p>
+      <p><strong>{_display_name(submitted_by)}</strong> submitted a new onboarding batch with {len(batch.candidates)} candidate(s):</p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0; font-size: 14px;">{candidate_rows}</table>
+      <p>Stage 1 IT setup (Windows Domain, Server Access, Email &amp; Okta) is now queued.</p>
+    """
+    text_lines = "\n".join(f"- {c.first_name} {c.last_name} ({c.job_title}, {c.department})" for c in batch.candidates)
+    text_body = (
+        f"Hi {recipient_name},\n\n"
+        f"{_display_name(submitted_by)} submitted a new onboarding batch with {len(batch.candidates)} candidate(s):\n\n"
+        f"{text_lines}\n\n"
+        f"Stage 1 IT setup is now queued. Details: {_onboarding_batch_url(batch.id)}"
+    )
+    return recipient_email, subject, _onboarding_wrap_html("New Onboarding Batch Submitted", body_html, _onboarding_batch_url(batch.id)), text_body
+
+
+def build_onboarding_stage1_complete(recipient_name: str, recipient_email: str, candidate: "models.OnboardingCandidate", completed_by: models.User):
+    # Deliberately does NOT include the generated temp password - a
+    # downstream provisioning team (Paychex/NextGen operators) needs to
+    # know the account/email now exists, not the AD credential itself, and
+    # emailing a password in plaintext is exactly the anti-pattern the
+    # "never persist it" decision was meant to avoid extending into transit.
+    full_name = f"{candidate.first_name} {candidate.last_name}"
+    subject = f"IT Identity Ready: {full_name} - proceed with your provisioning step"
+    body_html = f"""
+      <p>Hi {recipient_name},</p>
+      <p><strong>{_display_name(completed_by)}</strong> completed Stage 1 IT setup for <strong>{full_name}</strong> ({candidate.job_title}, {candidate.department}).</p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0; font-size: 14px;">
+        <tr><td style="padding:4px 0; color:#64748b;">Assigned Email</td><td style="padding:4px 0; font-weight:600; color:#1e293b;">{candidate.assigned_email}</td></tr>
+        <tr><td style="padding:4px 0; color:#64748b;">Start Date</td><td style="padding:4px 0; font-weight:600; color:#1e293b;">{candidate.start_date.strftime("%b %d, %Y")}</td></tr>
+        <tr><td style="padding:4px 0; color:#64748b;">Rehire</td><td style="padding:4px 0; font-weight:600; color:#1e293b;">{"Yes" if candidate.is_rehire else "No"}</td></tr>
+      </table>
+      <p>You can proceed with your part of onboarding for this employee.</p>
+    """
+    text_body = (
+        f"Hi {recipient_name},\n\n"
+        f"{_display_name(completed_by)} completed Stage 1 IT setup for {full_name} ({candidate.job_title}, {candidate.department}).\n"
+        f"Assigned Email: {candidate.assigned_email}\nStart Date: {candidate.start_date.strftime('%b %d, %Y')}\nRehire: {'Yes' if candidate.is_rehire else 'No'}\n\n"
+        f"You can proceed with your part of onboarding for this employee.\n"
+        f"Details: {_onboarding_batch_url(candidate.batch_id)}"
+    )
+    return recipient_email, subject, _onboarding_wrap_html("IT Identity Ready", body_html, _onboarding_batch_url(candidate.batch_id)), text_body
+
+
 def build_technician_note(ticket: models.Ticket, recipient: models.User, note: str):
     subject = f"New update on Ticket #{ticket.id}"
     body_html = f"""

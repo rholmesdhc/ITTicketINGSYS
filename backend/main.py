@@ -3,9 +3,12 @@ from dotenv import load_dotenv
 load_dotenv()  # must run before entra_auth is imported - it reads ENTRA_* env vars at module load time
 
 import io
+import re
 import uuid
+import secrets
+import string
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -48,6 +51,13 @@ SCREENSHOT_MAX_DIMENSION = 1024
 # 1024x1024 PNG can still be several MB) - a practical guardrail, not
 # something specifically requested.
 SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024
+
+# Employee IT Onboarding - domain used for suggested new-hire email
+# addresses (see _generate_assigned_email below). The app never actually
+# creates the mailbox/AD account - this is a suggestion for the technician
+# to use when they do that manually (see docs/employee-onboarding-prd.md's
+# non-goal on automating Entra account creation).
+ONBOARDING_EMAIL_DOMAIN = os.getenv("ONBOARDING_EMAIL_DOMAIN", "deltahealthcenter.org")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in cors_origins],
@@ -358,6 +368,15 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
     return None
 
 
+# Roles that only ever see/triage-as-self, not the full ticket queue - a
+# plain requester filing their own issue, and hr (Kim), who files onboarding
+# batches on behalf of new hires but isn't IT staff and shouldn't get
+# queue-wide ticket visibility any more than a requester does. Wherever
+# ticket visibility/triage used to check "is this a requester", it now
+# checks membership in this tuple instead - see docs/employee-onboarding-prd.md.
+_OWN_TICKETS_ONLY_ROLES = (models.RoleEnum.requester, models.RoleEnum.hr)
+
+
 def sla_deadline_for_priority(priority: str, from_time: datetime) -> datetime | None:
     """P1-P4 -> SLA response window, offset from from_time. Shared by
     ticket creation and the priority-correction path in update_ticket so
@@ -382,8 +401,9 @@ def create_ticket(ticket: schemas.TicketCreate, background_tasks: BackgroundTask
     now = datetime.utcnow()
     needs_review = False
 
-    if current_user.role == models.RoleEnum.requester:
-        # Requesters don't get to set their own priority - left unchecked,
+    if current_user.role in _OWN_TICKETS_ONLY_ROLES:
+        # Requesters (and hr, filing an onboarding batch's tickets) don't
+        # get to set their own priority - left unchecked,
         # almost everyone picks P1 regardless of actual severity, which
         # defeats the SLA system's purpose (P1 = 1 hour response). Whatever
         # they sent, if anything, is discarded in favor of the triage
@@ -443,7 +463,7 @@ def read_tickets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db),
     query = db.query(models.Ticket)
     
     # Role-based filtering
-    if current_user.role == models.RoleEnum.requester:
+    if current_user.role in _OWN_TICKETS_ONLY_ROLES:
         query = query.filter(models.Ticket.requester_id == current_user.id)
     # Technicians and Admins see all tickets
     
@@ -457,7 +477,7 @@ def read_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: mod
     # their own tickets. Returning 404 (not 403) for someone else's ticket
     # avoids confirming to a requester that a ticket id even exists.
     if not db_ticket or (
-        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+        current_user.role in _OWN_TICKETS_ONLY_ROLES and db_ticket.requester_id != current_user.id
     ):
         raise HTTPException(status_code=404, detail="Ticket not found")
     return db_ticket
@@ -470,7 +490,7 @@ async def upload_ticket_screenshot(ticket_id: int, file: UploadFile = File(...),
     # without needing a technician to do it on their behalf. Same 404
     # (not 403)/visibility pattern as read_ticket for anyone else's ticket.
     if not db_ticket or (
-        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+        current_user.role in _OWN_TICKETS_ONLY_ROLES and db_ticket.requester_id != current_user.id
     ):
         raise HTTPException(status_code=404, detail="Ticket not found")
 
@@ -517,7 +537,7 @@ def read_ticket_screenshot(ticket_id: int, db: Session = Depends(get_db), curren
     # Same visibility rule as read_ticket - viewing the attachment follows
     # the same rules as viewing the ticket itself.
     if not db_ticket or (
-        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+        current_user.role in _OWN_TICKETS_ONLY_ROLES and db_ticket.requester_id != current_user.id
     ):
         raise HTTPException(status_code=404, detail="Ticket not found")
     if not db_ticket.screenshot_path:
@@ -537,7 +557,7 @@ def update_ticket_contact_phone(ticket_id: int, body: schemas.TicketContactPhone
     # to set the best number to reach them about THIS issue without going
     # through a technician. Same 404 (not 403)/visibility pattern.
     if not db_ticket or (
-        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+        current_user.role in _OWN_TICKETS_ONLY_ROLES and db_ticket.requester_id != current_user.id
     ):
         raise HTTPException(status_code=404, detail="Ticket not found")
 
@@ -651,7 +671,7 @@ def reopen_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: m
     # who can already fully edit tickets (tech/admin) is allowed too.
     db_ticket = db.query(models.Ticket).filter(models.Ticket.id == ticket_id).first()
     if not db_ticket or (
-        current_user.role == models.RoleEnum.requester and db_ticket.requester_id != current_user.id
+        current_user.role in _OWN_TICKETS_ONLY_ROLES and db_ticket.requester_id != current_user.id
     ):
         raise HTTPException(status_code=404, detail="Ticket not found")
 
@@ -665,3 +685,418 @@ def reopen_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: m
     db.commit()
     db.refresh(db_ticket)
     return db_ticket
+
+
+# ============================================================================
+# Employee IT Onboarding (HR-initiated) - see docs/employee-onboarding-prd.md
+# ============================================================================
+
+def _require_roles(current_user: models.User, *roles: models.RoleEnum):
+    if current_user.role not in roles:
+        allowed = ", ".join(r.value for r in roles)
+        raise HTTPException(status_code=403, detail=f"Requires one of these roles: {allowed}")
+
+
+@app.get("/onboarding/job-titles", response_model=list[schemas.OnboardingJobTitleResponse])
+def read_onboarding_job_titles(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Any authenticated role can read (hr needs this to populate the batch
+    # submission form's dropdown) - only admin can manage the list itself.
+    return db.query(models.OnboardingJobTitle).order_by(models.OnboardingJobTitle.title).all()
+
+@app.post("/onboarding/job-titles", response_model=schemas.OnboardingJobTitleResponse)
+def create_onboarding_job_title(payload: schemas.OnboardingJobTitleCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_roles(current_user, models.RoleEnum.admin)
+    existing = db.query(models.OnboardingJobTitle).filter(func.lower(models.OnboardingJobTitle.title) == payload.title.strip().lower()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"A job title named '{existing.title}' already exists")
+    row = models.OnboardingJobTitle(title=payload.title.strip(), department=payload.department, default_workstation_type=payload.default_workstation_type)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+@app.patch("/onboarding/job-titles/{job_title_id}", response_model=schemas.OnboardingJobTitleResponse)
+def update_onboarding_job_title(job_title_id: int, payload: schemas.OnboardingJobTitleUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_roles(current_user, models.RoleEnum.admin)
+    row = db.query(models.OnboardingJobTitle).filter(models.OnboardingJobTitle.id == job_title_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Job title not found")
+    row.title = payload.title.strip()
+    row.department = payload.department
+    row.default_workstation_type = payload.default_workstation_type
+    db.commit()
+    db.refresh(row)
+    return row
+
+@app.delete("/onboarding/job-titles/{job_title_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_onboarding_job_title(job_title_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_roles(current_user, models.RoleEnum.admin)
+    row = db.query(models.OnboardingJobTitle).filter(models.OnboardingJobTitle.id == job_title_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Job title not found")
+    # No FK from OnboardingCandidate.job_title to this table - same
+    # point-in-time reasoning as Category, so deleting is always safe.
+    db.delete(row)
+    db.commit()
+    return None
+
+
+@app.get("/onboarding/notification-recipients", response_model=list[schemas.OnboardingNotificationRecipientResponse])
+def read_onboarding_notification_recipients(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_roles(current_user, models.RoleEnum.admin)
+    return db.query(models.OnboardingNotificationRecipient).order_by(models.OnboardingNotificationRecipient.trigger, models.OnboardingNotificationRecipient.recipient_name).all()
+
+@app.post("/onboarding/notification-recipients", response_model=schemas.OnboardingNotificationRecipientResponse)
+def create_onboarding_notification_recipient(payload: schemas.OnboardingNotificationRecipientCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_roles(current_user, models.RoleEnum.admin)
+    row = models.OnboardingNotificationRecipient(**payload.dict())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+@app.delete("/onboarding/notification-recipients/{recipient_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_onboarding_notification_recipient(recipient_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_roles(current_user, models.RoleEnum.admin)
+    row = db.query(models.OnboardingNotificationRecipient).filter(models.OnboardingNotificationRecipient.id == recipient_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    db.delete(row)
+    db.commit()
+    return None
+
+
+def _get_or_create_onboarding_category(db: Session) -> models.Category:
+    # Onboarding child/master tickets need a category (Ticket.category is
+    # required) - "Onboarding" is auto-created on first use rather than
+    # requiring an admin to remember to add it via Settings first, same
+    # defensive-default spirit as get_app_settings falling back to an
+    # unsaved default row.
+    category = db.query(models.Category).filter(func.lower(models.Category.name) == "onboarding").first()
+    if not category:
+        category = models.Category(name="Onboarding")
+        db.add(category)
+        db.flush()
+    return category
+
+
+def _build_default_onboarding_tasks(candidate: models.OnboardingCandidate) -> list[models.OnboardingTask]:
+    """Fixed Stage 1/2/2B/3 task set for a new candidate. Not admin-templated
+    (unlike the original template-driven onboarding PRD draft) - this
+    version's stages are specific, named, and tied to real systems
+    (Okta/NextGen/Dexis/FastAttach), so a configurable template isn't worth
+    the complexity for v1; see docs/employee-onboarding-prd.md."""
+    is_dental = candidate.department == schemas.ONBOARDING_DEPARTMENT_DENTAL
+
+    identity = models.OnboardingTask(
+        task_name="Windows Domain, Server Access, Email & Okta Created",
+        assigned_role=models.OnboardingAssignedRole.it_infrastructure,
+        is_blocked=False,
+        triggers_stage1_handoff=True,
+    )
+    tasks = [identity]
+
+    ehr = models.OnboardingTask(
+        task_name="NextGen EHR Account Creation",
+        assigned_role=models.OnboardingAssignedRole.ehr_admin,
+        is_blocked=True,  # unblocked when Stage 1 completes
+    )
+    tasks.append(ehr)
+
+    stage2_tasks = [ehr]
+    if is_dental and candidate.requires_dexis:
+        dexis = models.OnboardingTask(
+            task_name="Dexis Imaging Access Setup",
+            assigned_role=models.OnboardingAssignedRole.it_infrastructure,
+            is_blocked=True,
+        )
+        tasks.append(dexis)
+        stage2_tasks.append(dexis)
+    if is_dental and candidate.requires_fastattach:
+        fastattach = models.OnboardingTask(
+            task_name="FastAttach Access Setup",
+            assigned_role=models.OnboardingAssignedRole.it_infrastructure,
+            is_blocked=True,
+        )
+        tasks.append(fastattach)
+        stage2_tasks.append(fastattach)
+
+    training = models.OnboardingTask(
+        task_name="Dental Clinical Training" if is_dental else "Clinical/Role Training",
+        assigned_role=models.OnboardingAssignedRole.dental_trainer if is_dental else models.OnboardingAssignedRole.clinical_trainer,
+        is_blocked=True,  # unblocked once every stage2 task above completes
+    )
+    tasks.append(training)
+
+    return tasks
+
+
+def _recompute_candidate_stage(candidate: models.OnboardingCandidate) -> None:
+    """Derives candidate.stage from its tasks' actual status, rather than a
+    hand-set value - see OnboardingStage's docstring for why. Call after any
+    task mutation on this candidate."""
+    identity_task = next((t for t in candidate.tasks if t.triggers_stage1_handoff), None)
+    training_tasks = [t for t in candidate.tasks if t.assigned_role in (models.OnboardingAssignedRole.clinical_trainer, models.OnboardingAssignedRole.dental_trainer)]
+    stage2_tasks = [t for t in candidate.tasks if t is not identity_task and t not in training_tasks]
+
+    def _all_done(ts: list[models.OnboardingTask]) -> bool:
+        return bool(ts) and all(t.status == models.OnboardingTaskStatus.completed for t in ts)
+
+    if not identity_task or identity_task.status != models.OnboardingTaskStatus.completed:
+        candidate.stage = models.OnboardingStage.it_identity
+    elif not _all_done(stage2_tasks):
+        candidate.stage = models.OnboardingStage.ehr_provisioning
+    elif not _all_done(training_tasks):
+        candidate.stage = models.OnboardingStage.clinical_training
+    else:
+        candidate.stage = models.OnboardingStage.ready
+
+
+def _generate_assigned_email(first_name: str, last_name: str, db: Session) -> str:
+    # first-initial + last-name pattern from the spec's own example
+    # ("yroach@..."). ASCII-folded/lowercased/non-alnum-stripped so an
+    # unusual name can't produce an invalid local-part.
+    base = re.sub(r"[^a-z0-9]", "", (first_name[:1] + last_name).lower()) or "newhire"
+    existing_emails = {
+        e.lower() for (e,) in db.query(models.User.email).filter(models.User.email.isnot(None)).all()
+    } | {
+        e.lower() for (e,) in db.query(models.OnboardingCandidate.assigned_email).filter(models.OnboardingCandidate.assigned_email.isnot(None)).all()
+    }
+    candidate_local = base
+    suffix = 1
+    while f"{candidate_local}@{ONBOARDING_EMAIL_DOMAIN}".lower() in existing_emails:
+        suffix += 1
+        candidate_local = f"{base}{suffix}"
+    return f"{candidate_local}@{ONBOARDING_EMAIL_DOMAIN}"
+
+
+def _generate_temp_password() -> str:
+    # Never persisted (see OnboardingCandidate.assigned_email's docstring) -
+    # shown once in the complete-stage1 response for the technician to hand
+    # off directly, then it's gone. Random, not a fixed placeholder like the
+    # spec's illustrative "Password123" example - IT policy is expected to
+    # force a change at first login regardless.
+    body = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
+    return f"Dhc-{body}!"
+
+
+def _send_onboarding_notifications(db: Session, background_tasks: BackgroundTasks, trigger: str, departments: set[str] | None, builder, *builder_args):
+    """One call per event - `departments` is every department actually
+    involved (a whole batch's worth, or a single candidate's). A recipient
+    row with department=None always matches (applies regardless); a row
+    with a department set only matches if it's in `departments`. Querying
+    once with an IN(...) like this (not once per department) matters - a
+    department-agnostic row would otherwise get emailed once per department
+    present, duplicating the same notification."""
+    query = db.query(models.OnboardingNotificationRecipient).filter(models.OnboardingNotificationRecipient.trigger == trigger)
+    if departments:
+        query = query.filter(
+            (models.OnboardingNotificationRecipient.department.is_(None))
+            | (models.OnboardingNotificationRecipient.department.in_(departments))
+        )
+    else:
+        query = query.filter(models.OnboardingNotificationRecipient.department.is_(None))
+    for recipient in query.all():
+        to, subject, html, text = builder(recipient.recipient_name, recipient.recipient_email, *builder_args)
+        background_tasks.add_task(send_mail, to, subject, html, text)
+
+
+@app.post("/onboarding/batches", response_model=schemas.OnboardingBatchResponse)
+def create_onboarding_batch(payload: schemas.OnboardingBatchCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_roles(current_user, models.RoleEnum.hr, models.RoleEnum.admin)
+
+    category = _get_or_create_onboarding_category(db)
+    now = datetime.utcnow()
+    batch_label = f"[BATCH-{now.strftime('%Y-%m-%d')}]"
+
+    batch = models.OnboardingBatch(submitted_by_user_id=current_user.id, notes=payload.notes)
+    db.add(batch)
+    db.flush()  # need batch.id for the master ticket title and candidates' FK
+
+    names = ", ".join(f"{c.first_name} {c.last_name}" for c in payload.candidates)
+    master_ticket = models.Ticket(
+        title=f"{batch_label} New Hire Onboarding - {len(payload.candidates)} candidate(s)",
+        description=f"Onboarding batch submitted by {current_user.first_name or current_user.username} {current_user.last_name or ''}".strip() + f". Candidates: {names}.",
+        category=category.name,
+        priority=models.PriorityTier.P3,
+        requester_id=current_user.id,
+        sla_deadline=sla_deadline_for_priority("P3", now),
+    )
+    db.add(master_ticket)
+    db.flush()
+    batch.master_ticket_id = master_ticket.id
+
+    for c in payload.candidates:
+        candidate = models.OnboardingCandidate(
+            batch_id=batch.id,
+            first_name=c.first_name.strip(),
+            middle_name=(c.middle_name or "").strip() or None,
+            last_name=c.last_name.strip(),
+            job_title=c.job_title,
+            department=c.department,
+            clinic_site_id=c.clinic_site_id,
+            start_date=c.start_date,
+            is_rehire=c.is_rehire,
+            workstation_type=c.workstation_type,
+            requires_dexis=c.requires_dexis if c.department == schemas.ONBOARDING_DEPARTMENT_DENTAL else None,
+            requires_fastattach=c.requires_fastattach if c.department == schemas.ONBOARDING_DEPARTMENT_DENTAL else None,
+            workstation_suite=c.workstation_suite if c.department == schemas.ONBOARDING_DEPARTMENT_DENTAL else None,
+        )
+        db.add(candidate)
+        db.flush()
+
+        child_ticket = models.Ticket(
+            title=f"{batch_label} Onboarding: {c.first_name} {c.last_name} ({c.job_title})",
+            description=(
+                f"New hire onboarding for {c.first_name} {c.last_name}, {c.job_title} ({c.department}).\n"
+                f"Start date: {c.start_date.strftime('%Y-%m-%d')}. Rehire: {'Yes' if c.is_rehire else 'No'}.\n"
+                f"Workstation: {c.workstation_type}."
+                + (f" Suite/room: {c.workstation_suite}." if c.workstation_suite else "")
+            ),
+            category=category.name,
+            priority=models.PriorityTier.P3,
+            requester_id=current_user.id,
+            clinic_site_id=c.clinic_site_id,
+            sla_deadline=sla_deadline_for_priority("P3", now),
+        )
+        db.add(child_ticket)
+        db.flush()
+        candidate.child_ticket_id = child_ticket.id
+
+        for task in _build_default_onboarding_tasks(candidate):
+            task.candidate_id = candidate.id
+            db.add(task)
+
+    db.commit()
+    db.refresh(batch)
+
+    _send_onboarding_notifications(
+        db, background_tasks, "batch_submitted", {c.department for c in payload.candidates},
+        notifications.build_onboarding_batch_submitted, batch, current_user,
+    )
+
+    return batch
+
+
+@app.get("/onboarding/batches", response_model=list[schemas.OnboardingBatchResponse])
+def read_onboarding_batches(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    query = db.query(models.OnboardingBatch)
+    if current_user.role == models.RoleEnum.hr:
+        query = query.filter(models.OnboardingBatch.submitted_by_user_id == current_user.id)
+    elif current_user.role not in (models.RoleEnum.technician, models.RoleEnum.admin):
+        raise HTTPException(status_code=403, detail="Not authorized to view onboarding requests")
+    return query.order_by(models.OnboardingBatch.submitted_at.desc()).all()
+
+
+@app.get("/onboarding/batches/{batch_id}", response_model=schemas.OnboardingBatchResponse)
+def read_onboarding_batch(batch_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    batch = db.query(models.OnboardingBatch).filter(models.OnboardingBatch.id == batch_id).first()
+    if not batch or (
+        current_user.role == models.RoleEnum.hr and batch.submitted_by_user_id != current_user.id
+    ):
+        raise HTTPException(status_code=404, detail="Onboarding batch not found")
+    if current_user.role not in (models.RoleEnum.hr, models.RoleEnum.technician, models.RoleEnum.admin):
+        raise HTTPException(status_code=403, detail="Not authorized to view onboarding requests")
+    return batch
+
+
+@app.get("/onboarding/tasks", response_model=list[schemas.OnboardingTaskResponse])
+def read_onboarding_tasks(assigned_role: str | None = None, status_filter: str | None = Query(None, alias="status"), mine: bool = False, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # A cross-batch work queue for technicians/EHR admins/trainers - "what's
+    # left for me to do," not scoped to one batch at a time.
+    _require_roles(current_user, models.RoleEnum.technician, models.RoleEnum.admin)
+    query = db.query(models.OnboardingTask)
+    if assigned_role:
+        query = query.filter(models.OnboardingTask.assigned_role == assigned_role)
+    if status_filter:
+        query = query.filter(models.OnboardingTask.status == status_filter)
+    if mine:
+        query = query.filter(models.OnboardingTask.assigned_user_id == current_user.id)
+    return query.order_by(models.OnboardingTask.id).all()
+
+
+@app.patch("/onboarding/tasks/{task_id}", response_model=schemas.OnboardingTaskResponse)
+def update_onboarding_task(task_id: int, payload: schemas.OnboardingTaskUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    _require_roles(current_user, models.RoleEnum.technician, models.RoleEnum.admin)
+    task = db.query(models.OnboardingTask).filter(models.OnboardingTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Onboarding task not found")
+    if task.is_blocked:
+        raise HTTPException(status_code=400, detail="This task is blocked by a prior stage - it isn't actionable yet")
+    if task.triggers_stage1_handoff:
+        raise HTTPException(status_code=400, detail="Use POST /onboarding/candidates/{id}/complete-stage1 to complete this task - it generates the new hire's identity")
+
+    update_data = payload.dict(exclude_unset=True)
+    if "assigned_user_id" in update_data:
+        task.assigned_user_id = update_data["assigned_user_id"]
+    if "status" in update_data:
+        task.status = update_data["status"]
+        if update_data["status"] == "completed":
+            task.completed_by_user_id = current_user.id
+            task.completed_at = datetime.utcnow()
+        else:
+            task.completed_by_user_id = None
+            task.completed_at = None
+
+    db.commit()
+
+    candidate = db.query(models.OnboardingCandidate).filter(models.OnboardingCandidate.id == task.candidate_id).first()
+    # Unblock the next stage's tasks once everything gating them is done -
+    # mirrors _build_default_onboarding_tasks' stage2/training grouping.
+    stage2_tasks = [t for t in candidate.tasks if not t.triggers_stage1_handoff and t.assigned_role not in (models.OnboardingAssignedRole.clinical_trainer, models.OnboardingAssignedRole.dental_trainer)]
+    training_tasks = [t for t in candidate.tasks if t.assigned_role in (models.OnboardingAssignedRole.clinical_trainer, models.OnboardingAssignedRole.dental_trainer)]
+    if stage2_tasks and all(t.status == models.OnboardingTaskStatus.completed for t in stage2_tasks):
+        for t in training_tasks:
+            t.is_blocked = False
+    _recompute_candidate_stage(candidate)
+    if candidate.stage == models.OnboardingStage.ready:
+        batch = db.query(models.OnboardingBatch).filter(models.OnboardingBatch.id == candidate.batch_id).first()
+        if all(c.stage == models.OnboardingStage.ready for c in batch.candidates):
+            batch.status = models.OnboardingBatchStatus.completed
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+@app.post("/onboarding/candidates/{candidate_id}/complete-stage1", response_model=schemas.OnboardingStage1Result)
+def complete_onboarding_stage1(candidate_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """The portal-side "Complete Stage 1 & Notify Stakeholders" action - a
+    technician has already created the Windows Domain/Email/Okta account
+    manually (this app doesn't call Graph to do it - see
+    docs/employee-onboarding-prd.md's non-goals); this marks that task
+    done, generates a suggested email + one-time temp password for the
+    technician to actually set, unblocks Stage 2 (EHR/Dexis/FastAttach),
+    and notifies the configured downstream teams (Paychex/NextGen)."""
+    _require_roles(current_user, models.RoleEnum.technician, models.RoleEnum.admin)
+    candidate = db.query(models.OnboardingCandidate).filter(models.OnboardingCandidate.id == candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    if candidate.assigned_email:
+        raise HTTPException(status_code=400, detail="Stage 1 has already been completed for this candidate")
+
+    identity_task = next((t for t in candidate.tasks if t.triggers_stage1_handoff), None)
+    if not identity_task:
+        raise HTTPException(status_code=400, detail="This candidate has no Stage 1 identity task")
+
+    identity_task.status = models.OnboardingTaskStatus.completed
+    identity_task.completed_by_user_id = current_user.id
+    identity_task.completed_at = datetime.utcnow()
+
+    assigned_email = _generate_assigned_email(candidate.first_name, candidate.last_name, db)
+    temp_password = _generate_temp_password()
+    candidate.assigned_email = assigned_email
+
+    for t in candidate.tasks:
+        if t is not identity_task and t.assigned_role != models.OnboardingAssignedRole.clinical_trainer and t.assigned_role != models.OnboardingAssignedRole.dental_trainer:
+            t.is_blocked = False
+
+    _recompute_candidate_stage(candidate)
+    db.commit()
+    db.refresh(candidate)
+
+    _send_onboarding_notifications(
+        db, background_tasks, "stage1_complete", {candidate.department},
+        notifications.build_onboarding_stage1_complete, candidate, current_user,
+    )
+
+    return schemas.OnboardingStage1Result(candidate=candidate, temp_password=temp_password)

@@ -164,6 +164,7 @@ export default function Sidebar({ role, onHelpClick }: Props) {
 
   const isDashboard = pathname === "/dashboard";
   const isTickets = pathname?.startsWith("/tickets") ?? false;
+  const isOnboarding = pathname?.startsWith("/onboarding") ?? false;
   const isAdminArea = pathname === "/settings" || pathname === "/users";
 
   // Shared between the desktop (in-flow, collapsible) and mobile (always
@@ -221,6 +222,16 @@ export default function Sidebar({ role, onHelpClick }: Props) {
               { href: "/tickets/new", label: "New Ticket", active: pathname === "/tickets/new" },
             ]}
           />
+
+          {/* HR (Kim) submits onboarding batches; technician/admin work the
+              resulting Stage 1/2/3 task queue. Hidden for plain requesters -
+              this isn't a self-service feature the way Tickets is. */}
+          {(role === "hr" || role === "technician" || role === "admin") && (
+            <Link href="/onboarding" className={linkClass(isOnboarding)} title="Onboarding">
+              <span aria-hidden>🧑‍💼</span>
+              {label("Onboarding")}
+            </Link>
+          )}
 
           {role === "admin" && (
             <FlyoutNavItem

@@ -256,12 +256,14 @@ export default function UserManagement() {
                         className={`border text-sm font-bold uppercase rounded px-2 py-1 outline-none cursor-pointer ${
                           u.role === 'admin' ? 'bg-purple-50 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-700' :
                           u.role === 'technician' ? 'bg-amber-50 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-700' :
+                          u.role === 'hr' ? 'bg-sky-50 dark:bg-sky-900/40 text-sky-800 dark:text-sky-300 border-sky-200 dark:border-sky-700' :
                           'bg-slate-50 dark:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-600'
                         }`}
                         value={u.role}
                         onChange={(e) => handleRoleChange(u.id, e.target.value)}
                       >
                         <option value="requester">REQUESTER</option>
+                        <option value="hr">HR</option>
                         <option value="technician">TECHNICIAN</option>
                         <option value="admin">ADMIN</option>
                       </select>
@@ -419,6 +421,7 @@ export default function UserManagement() {
                     className="w-full border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded px-3 py-2 outline-none focus:border-medical-blue focus:ring-1 focus:ring-medical-blue"
                   >
                     <option value="requester">Requester</option>
+                    <option value="hr">HR</option>
                     <option value="technician">Technician</option>
                     <option value="admin">Admin</option>
                   </select>

@@ -1,232 +1,185 @@
-# PRD: Employee IT Onboarding Workflow
+# Employee IT Onboarding Workflow
 
-**Status:** Draft for review
-**Author:** Drafted with Claude Code, from a design discussion
-**Last updated:** 2026-09-11
+**Status:** Shipped (v1)
+**Last updated:** 2026-09-15
 
-## Origin and dependencies
+## Origin
 
-Unlike the Asset Manager PRD (grounded in an external product review) or
-the Knowledge Base PRD (grounded in an architecture evaluation), this one
-comes straight out of a design conversation - there's no external
-reference product being mapped here, just this org's actual gap. It does
-lean on two other in-flight pieces of work, though: hardware issuance in
-this PRD's v1.1 (§5.2) assumes the **Employee Equipment Request module**
-(sketched in the platform review, not yet PRD'd) and the **Asset
-Manager's** check-in/check-out phase both exist - v1 itself doesn't
-depend on either.
+The original draft of this doc (template/case-driven, IT-triggered, no HR
+login) was superseded before implementation by a much more specific,
+detailed spec the user provided directly: an HR Assistant ("Kim")
+submitting new-hire batches through the portal, real named staff/systems
+(Davis Hayes, Jamari Griffin, Margaret McGaugh, Okta/NextGen/Dexis/
+FastAttach), a 3-table schema, and an in-portal Stage 1 credential-handoff
+generator. This doc reflects what was actually built from that spec, not
+the earlier draft.
 
-## 1. Context and Problem
+Three architectural decisions were resolved with the user before writing
+any code (see git history around 2026-09-15):
 
-There's no structured onboarding tracking anywhere in this app today. New-
-hire IT setup - Entra account, workstation, EHR/application access - happens
-ad hoc: some mix of tickets, verbal follow-up, and things that quietly
-fall through the cracks. The individual pieces exist informally (user
-provisioning, asset check-out once that module ships, one-off tickets for
-setup requests), but nothing ties them together into "is this new hire
-actually fully set up," and nothing gives technicians a repeatable,
-role-based template so setup isn't reinvented - or partially forgotten -
-for every single new hire.
+1. **Kim's access**: a new `hr` role (`models.RoleEnum.hr`), not admin or
+   technician reuse - scoped to onboarding only, no ticket-queue or admin
+   settings access. Ticket visibility (`_OWN_TICKETS_ONLY_ROLES` in
+   `main.py`) treats `hr` the same as `requester`: sees only tickets they
+   personally filed (their onboarding batches' master/child tickets), not
+   the full queue.
+2. **Temp password storage**: never persisted. `POST
+   /onboarding/candidates/{id}/complete-stage1` generates one, returns it
+   once in the response body (`schemas.OnboardingStage1Result`), and it's
+   gone - no `temp_password` column exists on `onboarding_candidates`.
+3. **Notification routing**: config-driven via a new admin-managed
+   `OnboardingNotificationRecipient` table (Settings page →
+   "Onboarding Notifications"), not hardcoded names in Python - a staffing
+   change never needs a code deploy.
 
-For a healthcare org specifically, "who had EHR access, from when to
-when" is a real compliance question this app currently has no way to
-answer at all.
+## What shipped
 
-## 2. Goals
+### Data model (`backend/models.py`, all Integer PKs - **not** UUID as the
+original spec sketched, to match this app's existing convention throughout)
 
-- One place to see "is this new hire fully onboarded" - a checklist, not
-  a scattered set of tickets, emails, and a spreadsheet somewhere.
-- Role/department templates so setup is consistent - a tech setting up a
-  new nurse doesn't have to remember from scratch that EHR access is
-  needed; a billing clerk's template simply doesn't include it.
-- Real integration with what already exists or is already planned, not a
-  parallel tracking system: hardware issuance flows through Equipment
-  Request/Asset checkout once those exist; application access gets
-  verified against actual Entra group membership, not just a checkbox
-  someone can forget to actually action.
-- A timestamped, auditable record - who set up what, when - as a
-  compliance asset for a healthcare org, not just an ops convenience.
-- Lay groundwork offboarding (the mirror workflow) can reuse later
-  without a redesign, even though building offboarding itself is out of
-  scope for v1 (see §6.5).
+- `OnboardingJobTitle` - admin-managed (Settings page), same CRUD shape as
+  `Category`. Drives the new-request form's Position dropdown and
+  auto-fills Department (still editable).
+- `OnboardingNotificationRecipient` - admin-managed routing rows: which
+  `trigger` (`batch_submitted` / `stage1_complete`), optional `department`
+  filter (null = always), name/email, and `cc` (To vs CC).
+- `OnboardingBatch` - one HR submission. `submitted_by_user_id`, `status`
+  (submitted/in_progress/completed/cancelled, auto-advances to `completed`
+  once every candidate reaches `ready`), and `master_ticket_id` linking to
+  a real `Ticket` row (`[BATCH-YYYY-MM-DD] ...`) so it's visible in the
+  existing ticket queue/reporting.
+- `OnboardingCandidate` - one per new hire. Name/title/department/site/
+  start date/rehire/workstation type, Dental-only conditional fields
+  (`requires_dexis`, `requires_fastattach`, `workstation_suite` - `NULL`,
+  not `False`, for non-Dental candidates), `assigned_email` (set by Stage
+  1 completion), `stage` (derived, see below), and `child_ticket_id`
+  linking to its own `Ticket` row.
+- `OnboardingTask` - one row per checklist step, **not admin-templated**
+  (a deliberate scope cut from the original draft's `OnboardingTemplate`
+  idea - this version's stages are fixed and named to real systems, so a
+  configurable template wasn't worth the complexity for v1). Fixed set per
+  candidate, built in `main.py`'s `_build_default_onboarding_tasks`:
+  1. **Stage 1** - "Windows Domain, Server Access, Email & Okta Created"
+     (`IT_INFRASTRUCTURE`, unblocked immediately, `triggers_stage1_handoff`).
+  2. **Stage 2** - "NextGen EHR Account Creation" (`EHR_ADMIN`); Dental
+     candidates also get "Dexis Imaging Access Setup" and/or "FastAttach
+     Access Setup" (`IT_INFRASTRUCTURE`) if those were requested. All
+     blocked until Stage 1 completes.
+  3. **Stage 3** - "Clinical/Role Training" (`CLINICAL_TRAINER`) or
+     "Dental Clinical Training" (`DENTAL_TRAINER`) for Dental. Blocked
+     until every Stage 2 task for that candidate completes.
 
-## 3. Non-Goals (v1)
+  `candidate.stage` (`it_identity` → `ehr_provisioning` →
+  `clinical_training` → `ready`) is **recomputed from task status**
+  (`_recompute_candidate_stage`), never hand-set - it can't drift out of
+  sync with the actual checklist.
 
-- Anything HR-owned: I-9/paperwork, benefits enrollment, orientation
-  scheduling, payroll setup. Hard line - **IT-controlled steps only**
-  (accounts, hardware, application/EHR access, badge access *if* IT
-  actually provisions that here - see Open Question 3).
-- Offboarding itself - the data model should accommodate it later, but
-  the actual offboarding workflow is not being built in v1.
-- Automating Entra account **creation**. Creating the account is (today)
-  a manual admin action in the Azure portal; v1 tracks/checklists that
-  step, it doesn't call Graph to create the account itself. Automating
-  the creation is a possible Later item (§5.3), not v1 or v1.1.
-- A generic project/task-management tool. Scoped to the onboarding use
-  case specifically, not a Trello-style board for arbitrary checklists.
+### Backend endpoints (`backend/main.py`)
 
-## 4. Personas
+- `GET/POST/PATCH/DELETE /onboarding/job-titles` - GET open to any
+  authenticated role (the form needs it), mutations admin-only.
+- `GET/POST/DELETE /onboarding/notification-recipients` - admin-only.
+- `POST /onboarding/batches` (hr/admin) - creates the master ticket, one
+  child ticket + task set per candidate, and fires `batch_submitted`
+  notifications (see below).
+- `GET /onboarding/batches` / `GET /onboarding/batches/{id}` - hr sees only
+  their own (404, not 403, for someone else's - same pattern as ticket
+  visibility elsewhere in this app); technician/admin see all.
+- `GET /onboarding/tasks` (technician/admin, filters: `assigned_role`,
+  `status`, `mine`) - a cross-batch work queue, surfaced on the
+  `/onboarding` list page.
+- `PATCH /onboarding/tasks/{id}` (technician/admin) - status/assignment;
+  refuses a blocked task (400) and refuses the Stage 1 identity task (400,
+  points at the endpoint below instead); auto-unblocks the next stage when
+  its gating tasks all complete.
+- `POST /onboarding/candidates/{id}/complete-stage1` (technician/admin) -
+  the "Complete Stage 1 & Notify Stakeholders" action: completes the
+  identity task, generates `{firstinitial}{lastname}@<domain>` (collision-
+  checked against existing users and other candidates) plus a random temp
+  password, unblocks Stage 2, fires `stage1_complete` notifications, and
+  returns the password once. Idempotent-guarded (400 if already done).
 
-- **IT Admin/Technician**: creates a case when notified of a new hire,
-  works the checklist, marks steps complete, fulfills hardware/access
-  requests.
-- **Manager/HR** (indirect in v1): the actual trigger - "we have a new
-  hire starting Monday" - but doesn't need a login of their own yet;
-  today that's an email or conversation a technician turns into a case.
-  A lightweight intake path for them directly is v1.1 (§5.2).
-- **New hire**: not really a user of this feature at all in v1 - they
-  can't log into this app before their Entra account exists. This is an
-  internal IT tracking tool, not requester-facing like tickets or the KB.
-- **AI agents**: an MCP tool surface mirroring tickets/assets - "what's
-  the status of Jane Doe's onboarding," "start an onboarding case from
-  the Clinical Staff template" - same shape as the existing tools.
+Notifications reuse the existing `mailer.py`/`notifications.py`
+infrastructure (Graph API / SMTP / simulate-log fallback, `BackgroundTasks`
+so a slow send never blocks the request). `_send_onboarding_notifications`
+queries recipients matching the trigger and (department IS NULL OR
+department IN batch's departments) **once per event**, not once per
+department - an earlier draft of this double-emailed department-agnostic
+recipients when a batch had multiple departments, caught before shipping.
 
-## 5. Scope: Feature Set
+**Deliberate deviation from the spec's draft**: the `stage1_complete`
+email to downstream teams (Paychex/NextGen operators) does **not** include
+the temp password - only the assigned email/name/start date. Those teams
+need to know the identity exists, not the AD credential; emailing a
+password in plaintext would undercut the "never persist it" decision by
+just relocating the exposure to an inbox instead.
 
-### 5.1 Core (v1)
+### Frontend (`frontend/src/app/onboarding/`)
 
-- **`OnboardingTemplate` + `OnboardingTemplateStep`** (admin-managed,
-  same CRUD shape as ticket categories) - e.g. a "Clinical Staff"
-  template with steps: Entra account created, workstation issued, EHR
-  (NextGen) access granted, email/M365 access confirmed, badge access.
-- **`OnboardingCase`**: new hire name, department, template used, start
-  date, site, assigned technician, status (in progress / complete),
-  created_at.
-- **`OnboardingTask`**: one row per checklist step on a case, **copied**
-  from the template at case-creation time - not a live pointer, matching
-  this app's existing point-in-time-record philosophy (the same reason
-  ticket categories don't retroactively rewrite already-filed tickets).
-  Status (pending/done), completed_by, completed_at, optional note.
-- **Manual completion** - a technician checks off each step by hand in
-  v1; no automated verification yet (that's v1.1).
-- **Case list** (open/complete) + **case detail page** (the checklist) +
-  **template management** under Admin Settings, same modal pattern as
-  ticket/asset categories.
-- **Basic email notifications**, reusing `mailer.py` - the assigned
-  technician on case creation, optionally the requesting manager once a
-  case is fully complete.
+- `/onboarding` - batch list (hr: own; technician/admin: all, plus an
+  actionable task queue) with a "+ New Onboarding Request" button
+  (hr/admin).
+- `/onboarding/new` - Single Hire / Batch Submission toggle, Position
+  dropdown (datalist, backed by `OnboardingJobTitle`) auto-filling
+  Department, and the Dental-conditional block (Dexis checked by default,
+  FastAttach unchecked, Suite/Workstation field) that only renders when
+  Department = Dental.
+- `/onboarding/[id]` - batch detail: per-candidate task checklists, a
+  status `<select>` for ordinary tasks, and the "Complete Stage 1 & Notify
+  Stakeholders" button in place of the select for the identity task -
+  clicking it shows a one-time modal with the generated email + temp
+  password and a copy button, explicitly warned as shown-once/not-stored.
+- Sidebar: a new "🧑‍💼 Onboarding" item, visible to hr/technician/admin
+  only (not plain requesters - this isn't a self-service feature the way
+  Tickets is).
+- Settings page: "Onboarding Job Titles" and "Onboarding Notifications"
+  CRUD sections, same modal pattern as Ticket Categories.
+- `users/page.tsx`: `hr` added to both role dropdowns (inline role editor
+  and the create/edit user modal).
 
-### 5.2 Important (v1.1)
+### Migration
 
-- **Hardware issuance auto-links to Equipment Request/Asset checkout** -
-  marking a hardware step "done" really means "fulfill this Equipment
-  Request," not two disconnected trackers of the same physical laptop.
-  Depends on the Equipment Request module and the Asset Manager's
-  checkout phase both existing.
-- **Application-access verification** against real Entra group
-  membership (a Graph API read) instead of a blind checkbox - a step can
-  show "verified" vs. "marked done, not yet confirmed."
-- **Overdue-step reminders**, reusing the existing SLA-banner visual
-  pattern already on the Tickets page.
-- **A lightweight intake path** for a manager/HR to request a new case
-  without a full account - a simple authenticated form, or an
-  email-to-case flow.
+`b7b2b788e585_add_employee_onboarding_tables_and_hr_.py` - adds `hr` to
+the existing `roleenum` Postgres type via `ALTER TYPE ... ADD VALUE`
+inside an `autocommit_block()` (same requirement as any enum-type change
+outside a fresh `CREATE TYPE`), plus the 5 new tables. Downgrade explicitly
+drops the 4 new enum types `op.drop_table` leaves orphaned (confirmed via
+a real upgrade→downgrade→upgrade round-trip - the first attempt failed
+with "type already exists" until this was added) and documents that `hr`
+itself can't be cleanly removed from `roleenum` on downgrade (Postgres has
+no `DROP VALUE`).
 
-### 5.3 Later (v2+)
+## Verified
 
-- **Offboarding workflow** - the mirror of this, reusing the same
-  case/task shape (see §6.5 for how the schema is meant to stay open to
-  this). Deliberately deferred, not forgotten.
-- **Automated Entra account creation/group assignment** via Graph API -
-  actually *doing* the provisioning, not just checklisting/verifying it.
-- **Digital signoff** - a manager confirming onboarding is complete, not
-  just IT marking its own checklist done.
-- **Reporting**: average time-to-fully-onboarded, which steps most often
-  run late.
+- Full upgrade → downgrade → upgrade migration round-trip.
+- `tsc --noEmit` and `next build` clean.
+- Browser: hr login → role-gated sidebar (Onboarding visible, Admin
+  Settings hidden) → new-request form rendering, including the Dental
+  conditional block defaulting correctly.
+- API-level, end-to-end: submitted a 2-candidate batch (one Dental with
+  Dexis only, one Administrative) as hr → correct master/child tickets,
+  correct per-candidate task sets, correct blocking → completed Stage 1 as
+  a technician → correct generated email (`yroach@...`), password returned
+  once and confirmed absent from the DB row → completed Stage 2/3 tasks →
+  confirmed the blocked-task guard (400) before its gate is satisfied →
+  confirmed stage auto-advanced through all 4 states → confirmed the batch
+  auto-completed once both candidates reached `ready` → confirmed hr's
+  batch list is scoped to their own submissions only.
 
-## 6. Architecture
+## Known gaps / left for later
 
-### 6.1 Backend (FastAPI, extends the existing app)
-
-- New tables: `onboarding_templates`, `onboarding_template_steps`,
-  `onboarding_cases`, `onboarding_tasks`. Alembic migrations following the
-  established pattern.
-- Role-gated endpoints under `/onboarding` - admin manages templates
-  (mirroring `/categories`), technician+ manages cases/tasks day to day
-  (mirroring how ticket updates are already gated).
-- Case creation copies the chosen template's steps into real
-  `OnboardingTask` rows, not a live FK - editing a template later never
-  retroactively changes an in-progress case's checklist (Open Question 4
-  flags the one real tradeoff this creates).
-
-### 6.2 Frontend (Next.js, new routes alongside existing ones)
-
-- `/onboarding` list page (open/complete cases), `/onboarding/[id]`
-  detail page (the checklist), template management under Admin Settings.
-- Sidebar: a single new item to start - a flyout (like Tickets/Admin
-  Settings) only once this actually grows a second child (e.g. Cases vs.
-  Templates); adding a flyout for a one-page v1 feature would be
-  premature.
-
-### 6.3 MCP Server (`mcp-server/`, new tools alongside existing ones)
-
-- `list_onboarding_cases`, `get_onboarding_case`,
-  `create_onboarding_case`, `complete_onboarding_task` - same
-  docstring/parameter conventions and service-account auth as the
-  existing ticket/asset tools.
-
-## 7. Non-Functional Requirements
-
-- **Auth**: same Entra ID SSO, no new role tier - admin manages
-  templates, technician+ manages cases, matching how day-to-day
-  ticket/asset operations are already gated.
-- **Audit**: `OnboardingTask` completion records (who, when) are exactly
-  the kind of immutable, timestamped record this app already commits to
-  elsewhere (the Asset Manager's audit history, tickets' point-in-time
-  fields) - same discipline applies here, and matters more given the
-  compliance angle in §1.
-- **HIPAA-adjacent posture**: no PHI in onboarding notes, same
-  policy-not-technical-enforcement warning used everywhere else in this
-  app.
-
-### 6.5 Data model relationship, and staying open to offboarding
-
-```
-OnboardingTemplate (admin-managed, e.g. "Clinical Staff")
-       └── OnboardingTemplateStep (e.g. "Grant NextGen access")
-
-OnboardingCase (one per new hire)
-       ├── template_id ──▶ OnboardingTemplate (which one was used)
-       ├── new_hire_user_id ──▶ User (once their account exists)
-       ├── assigned_tech_id ──▶ User (existing)
-       └── OnboardingTask (copied from the template's steps at creation)
-              ├── (v1.1) linked Equipment Request ──▶ Asset checkout
-              └── (v1.1) verified_against_entra: bool
-```
-
-Offboarding (§5.3) is deliberately not built in v1, but the schema is
-meant to stay cheap to extend into it - either a parallel
-`OffboardingCase`/`OffboardingTask` pair reusing the same template
-mechanism, or a shared table with a `direction` (onboarding/offboarding)
-discriminator. Open Question 5 asks whether to decide that naming now
-rather than after v1 ships and a rename gets expensive.
-
-## 8. Success Metrics
-
-- % of new hires with a fully-completed onboarding case within N days of
-  their start date.
-- Reduction in "the new hire still doesn't have X" tickets/complaints - a
-  real signal that exists informally today and should visibly drop.
-- Time from case creation to fully onboarded.
-
-## 9. Open Questions (for you, before implementation planning starts)
-
-1. Who actually triggers a case in v1 - does HR/a manager get any access
-   at all, or does IT create every case manually off an email or
-   conversation? Decides whether a requester-facing intake form is v1 or
-   v1.1.
-2. Should hardware issuance in v1 already assume Equipment Request
-   exists, or is it acceptable for v1 to launch before that module does
-   (deferring the link itself to v1.1, per §5.2)? A sequencing question,
-   not a design one.
-3. Does IT actually provision badge/physical access at Delta Health
-   Center, or is that a different department entirely? Decides whether
-   "badge access" belongs in the template step library at all.
-4. Confirm the "copy template steps into the case at creation, not a live
-   pointer" tradeoff (§6.1) is right - it matches this app's existing
-   philosophy, but means an in-progress case never picks up a step added
-   to its template after the fact. Acceptable, or does that scenario
-   actually come up?
-5. Naming: `OnboardingCase`/`OnboardingTask` now, with an offboarding
-   rename/parallel table later, or design the `direction` discriminator
-   in from day one (§6.5)? Cheap to decide now, not cheap after v1 ships.
+- **Notification recipients need real data entered.** 6 of the 8 people
+  named in the original spec (Davis Hayes, Jamari Griffin, Margaret
+  McGaugh, Shanika Kimber, Barbara Flore, Dr. Inge Ford) already exist as
+  real users in this system and were seeded as default recipients using
+  their real on-file emails. Two could **not** be safely resolved and were
+  deliberately left out rather than guessed: "Candace" (Paychex/NextGen CC)
+  matches two different existing users, and no "Kimberly Crout" exists in
+  the system at all. Add these via Settings → Onboarding Notifications.
+- No admin UI to reorder/preview the fixed Stage 1/2/3 task template - it's
+  code (`_build_default_onboarding_tasks`), not data. Revisit if a second
+  department-specific variant is needed beyond Dental.
+- `OnboardingCandidate.clinic_site_id` accepts any existing clinic site;
+  no validation ties it to where the chosen job title is actually offered.
+- No MCP tool surface yet (the original draft's §6.3 - `list_onboarding_batches`
+  etc. - wasn't built this pass).
