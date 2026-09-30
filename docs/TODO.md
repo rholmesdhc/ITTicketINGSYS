@@ -7,6 +7,14 @@ ships, so there's a record of when/why.
 
 ## Open
 
+- [ ] Production deployment - full timeline drafted at
+      `docs/production-deployment-plan.md` (Client Review → Beta
+      Readiness → 2-week Beta → Beta Retro → Azure Container Apps
+      build-out → Go-Live). Several items below are called out there as
+      beta blockers specifically (the status/priority validation gap,
+      the Azure AD RBAC review, and the Candace VanHorn/Shanika Kimber
+      Entra group adds) - check that doc for the full sequencing before
+      picking up any of them in isolation.
 - [ ] Remove the User Management page (`/users`, and its card on Admin
       Settings). Worth deciding alongside the Azure AD RBAC review below -
       role is already resolved from Entra security group membership on
@@ -139,7 +147,57 @@ ships, so there's a record of when/why.
          splitting that task needs a decision on which of the resulting
          checkboxes (all of them? a specific one?) actually triggers that
          handoff.
-
+- [ ] Department Head sign-off before an onboarding is considered complete,
+      with a notification to all parties once signed off. Today there's no
+      approval step at all - `OnboardingBatch.status` auto-flips to
+      `completed` the moment every candidate's `stage` reaches `ready`
+      (`main.py`'s `update_onboarding_task`), purely from task checkboxes,
+      no human confirming anything. There's also no "onboarding fully
+      complete" notification today - `OnboardingNotificationRecipient`
+      only has `batch_submitted` and `stage1_complete` as trigger values;
+      this needs a third. Open questions for whenever this gets built: who
+      is "the department head" for a given candidate (their own manager?
+      a fixed role like the existing EHR Director/Finance assignees? -
+      there's no manager/department-head relationship anywhere in the
+      `User` model today) and does reaching `ready` block on their sign-off
+      (i.e. `ready` isn't really terminal anymore, sign-off is) or does
+      `ready` stay as-is and sign-off is a separate, later confirmation
+      layered on top.
+- [ ] Remove batch (multi-candidate) onboarding submission entirely - leave
+      only Single Hire mode. Today `onboarding/new/page.tsx` has a Single
+      Hire / Batch Submission toggle, and the backend
+      (`schemas.OnboardingBatchCreate.candidates`) accepts a list of any
+      length. Removing batch mode is mostly a frontend change (drop the
+      toggle, the "+ Add another candidate" button, and the
+      multi-candidate form loop - always submit exactly one), but leaves
+      an open question worth deciding before building it: does the
+      backend also start rejecting/validating `len(candidates) != 1`, or
+      does it stay technically batch-capable (a "batch" of exactly one)
+      with only the UI constrained - i.e. is this a real API contract
+      change or just a UI simplification. `OnboardingBatch`/`OnboardingCandidate`
+      as model/table names would read a little oddly for an always-size-1
+      batch either way - not worth renaming for that alone.
+- [ ] HR needs the ability to cancel/abort an onboarding request they
+      submitted. Half-exists already: `OnboardingBatchStatus.cancelled` has
+      been sitting in the enum since the original build, but nothing in
+      `main.py` ever sets it - no endpoint reaches it today, dead value.
+      Straightforward part: a `POST /onboarding/batches/{id}/cancel` (hr,
+      scoped to their own batch same as the existing GET visibility rule;
+      admin too), guarded against re-cancelling/cancelling an already-
+      `completed` batch. The real open questions are what happens to
+      everything the batch already spun up: (1) its master + child
+      `Ticket` rows - `TicketStatus` only has open/in_progress/resolved,
+      no cancelled state, so either those need to auto-resolve with a
+      synthetic "onboarding cancelled" resolution, or get left open for a
+      technician to close by hand; (2) its still-pending `OnboardingTask`
+      rows - same gap, `OnboardingTaskStatus` has no cancelled value
+      either, so a cancelled batch's tasks would just sit there as
+      "pending" forever looking actionable unless something accounts for
+      that; (3) whether a cancelled candidate should still be blockable
+      from further action (PATCH task, complete-stage1) via the same kind
+      of guard already used for blocked/already-done tasks, so a
+      technician can't keep working a cancelled hire's checklist by
+      mistake.
 ## Done
 
 - [x] Implement the Employee IT Onboarding Workflow - shipped 2026-09-15.
@@ -180,3 +238,17 @@ ships, so there's a record of when/why.
       value 500'd instead of cleanly 422ing (added a Pydantic validator -
       the same gap exists for status/priority, logged separately above
       since fixing those was out of scope here).
+- [x] Add Candace VanHorn (`cvanhornnye`) to the `ITHelpdesk-Technicians`
+      Entra security group - confirmed 2026-09-18 via the Entra admin
+      center's member list. Her app role (already set to `technician` on
+      2026-09-17) now sticks on her first real Entra login instead of
+      reverting to `requester`.
+- [x] Add Shanika Kimber (`skimber`) to the `ITHelpdesk-Technicians` Entra
+      security group - confirmed 2026-09-18, same verification and same
+      effect as Candace VanHorn above.
+- [x] Confirmed Margaret McGaugh's `ITHelpdesk-Technicians` membership is
+      intentional (2026-09-18) - her app role was `requester` (she'd only
+      ever been configured as a notification contact, never deliberately
+      given technician access), set to `technician` to match, both local
+      dev id 218 and UAT id 85. Same `entra_object_id`-is-null situation as
+      Candace/Shanika above, now resolved the same way.
