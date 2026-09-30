@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_BASE_URL, isUnauthorized } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
+import OnboardingStageProgress from "@/components/OnboardingStageProgress";
 
 type Candidate = {
   id: number;
@@ -29,20 +30,6 @@ type Task = {
   assigned_role: string;
   is_blocked: boolean;
   status: string;
-};
-
-const STAGE_LABELS: Record<string, string> = {
-  it_identity: "IT Identity",
-  ehr_provisioning: "EHR Provisioning",
-  clinical_training: "Clinical Training",
-  ready: "Ready",
-};
-
-const STAGE_COLORS: Record<string, string> = {
-  it_identity: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  ehr_provisioning: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
-  clinical_training: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
-  ready: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
 };
 
 export default function OnboardingList() {
@@ -139,22 +126,22 @@ export default function OnboardingList() {
                 href={`/onboarding/${b.id}`}
                 className="block bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 hover:border-medical-blue dark:hover:border-medical-accent transition-colors"
               >
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div>
-                    <p className="font-semibold text-slate-800 dark:text-slate-100">
-                      Batch #{b.id} — {b.candidates.length} candidate{b.candidates.length === 1 ? "" : "s"}
-                    </p>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Submitted {new Date(b.submitted_at).toLocaleDateString()} · {b.candidates.map(c => `${c.first_name} ${c.last_name}`).join(", ")}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {b.candidates.map(c => (
-                      <span key={c.id} className={`text-xs px-2 py-0.5 rounded-full font-semibold ${STAGE_COLORS[c.stage] || ""}`}>
-                        {STAGE_LABELS[c.stage] || c.stage}
-                      </span>
-                    ))}
-                  </div>
+                <p className="font-semibold text-slate-800 dark:text-slate-100">
+                  Batch #{b.id} — {b.candidates.length} candidate{b.candidates.length === 1 ? "" : "s"}
+                </p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
+                  Submitted {new Date(b.submitted_at).toLocaleDateString()}
+                </p>
+                {/* Named per-candidate rows (not just stage pills) - an IT
+                    Manager scanning this list needs to see WHO is at each
+                    stage, not just how many candidates are at some stage. */}
+                <div className="flex flex-col gap-1.5">
+                  {b.candidates.map(c => (
+                    <div key={c.id} className="flex items-center justify-between gap-3 flex-wrap">
+                      <span className="text-sm text-slate-700 dark:text-slate-200 font-medium">{c.first_name} {c.last_name}</span>
+                      <OnboardingStageProgress stage={c.stage} compact />
+                    </div>
+                  ))}
                 </div>
               </Link>
             ))}

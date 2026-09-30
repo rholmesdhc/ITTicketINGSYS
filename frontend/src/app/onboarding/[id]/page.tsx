@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { API_BASE_URL, isUnauthorized } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
+import OnboardingStageProgress from "@/components/OnboardingStageProgress";
 
 type Task = {
   id: number;
@@ -44,10 +45,6 @@ type Batch = {
   candidates: Candidate[];
 };
 
-const STAGE_LABELS: Record<string, string> = {
-  it_identity: "IT Identity", ehr_provisioning: "EHR Provisioning",
-  clinical_training: "Clinical Training", ready: "Ready",
-};
 const TASK_STATUS_LABELS: Record<string, string> = { pending: "Pending", in_progress: "In Progress", completed: "Completed" };
 
 export default function OnboardingBatchDetail() {
@@ -171,7 +168,7 @@ export default function OnboardingBatchDetail() {
               <div className="flex flex-col gap-6">
                 {batch.candidates.map(c => (
                   <div key={c.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-                    <div className="flex items-center justify-between gap-4 flex-wrap mb-3">
+                    <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
                       <div>
                         <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
                           {c.first_name} {c.middle_name ? c.middle_name + " " : ""}{c.last_name}
@@ -181,16 +178,15 @@ export default function OnboardingBatchDetail() {
                           {c.is_rehire && " · Rehire"}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {c.child_ticket_id && (
-                          <a href={`/tickets/${c.child_ticket_id}`} className="text-xs text-medical-blue dark:text-medical-accent hover:underline font-semibold">
-                            Ticket #{c.child_ticket_id}
-                          </a>
-                        )}
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold">
-                          {STAGE_LABELS[c.stage] || c.stage}
-                        </span>
-                      </div>
+                      {c.child_ticket_id && (
+                        <a href={`/tickets/${c.child_ticket_id}`} className="text-xs text-medical-blue dark:text-medical-accent hover:underline font-semibold shrink-0">
+                          Ticket #{c.child_ticket_id}
+                        </a>
+                      )}
+                    </div>
+
+                    <div className="mb-4 pb-4 border-b border-slate-100 dark:border-slate-700 overflow-x-auto">
+                      <OnboardingStageProgress stage={c.stage} tasks={c.tasks} />
                     </div>
 
                     {c.department === "Dental" && (

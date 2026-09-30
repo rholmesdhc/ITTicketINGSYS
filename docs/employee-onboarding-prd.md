@@ -1,7 +1,8 @@
 # Employee IT Onboarding Workflow
 
-**Status:** Shipped (v1)
-**Last updated:** 2026-09-15
+**Status:** v1 shipped 2026-09-15. v1.1 (granular Stage 1/2 task tracking)
+designed below, not yet built.
+**Last updated:** 2026-09-16
 
 ## Origin
 
@@ -183,3 +184,128 @@ no `DROP VALUE`).
   no validation ties it to where the chosen job title is actually offered.
 - No MCP tool surface yet (the original draft's §6.3 - `list_onboarding_batches`
   etc. - wasn't built this pass).
+
+## v1.1 (planned): Granular Stage 1/2 task tracking
+
+### Origin
+
+Prompted by a real incident, not a hypothetical: an early test batch's
+`stage1_complete` email reached Margaret McGaugh for real (see the
+"Cleaned up" note earlier in the git history around 2026-09-15/16 - the
+notification-recipient rows seeded from her real on-file email worked
+exactly as designed, just against test data). Talking through the fallout
+surfaced that the single bundled Stage 1 task ("Windows Domain, Server
+Access, Email & Okta Created") was hiding real, separately-owned work
+behind one checkbox - a technician checking it off was implicitly
+claiming five or six different things were all true at once. The user
+walked through, over several messages, exactly what needs to become
+individually trackable, correcting two wrong assumptions along the way
+(both worth recording, since they're not obvious from the code alone):
+
+1. NextGen splits into two accounts, not one - a **server-level login**
+   (infrastructure access to reach the NextGen server at all) owned by
+   **IT**, and a **application-level user account** (the actual in-EHR
+   profile with role-based permissions) owned by the **EHR Director**.
+   The original v1 build only tracked the second half of this
+   (`EHR_ADMIN`) under a name that implied it was the whole thing.
+2. QuickBooks (Finance-track hires only) mirrors that same split - IT
+   grants base access, a Finance-side role sets up the actual QuickBooks
+   user profile. Confirmed via AskUserQuestion rather than assumed, since
+   guessing "IT end-to-end" would have repeated the same mistake NextGen
+   made.
+
+"Access to applications" was deliberately scoped to a fixed, named list
+(not left as an open-ended catch-all) once asked directly: NextGen EHR,
+Dexis, FastAttach, the IT HelpDesk Portal itself, QuickBooks (Finance
+only), and - added in a follow-up message - Microsoft Outlook and Teams.
+
+### Resolved task list
+
+**Stage 1 - IT Identity & Core Apps** (`IT_INFRASTRUCTURE`, unblocked
+immediately, all six gate the Stage 1 handoff - see below):
+
+1. Windows/DHC Login Account Created
+2. Email Account Created
+3. Outlook Access Confirmed
+4. Teams Access Confirmed
+5. Okta Security Account Created
+6. IT HelpDesk Portal Access Confirmed
+
+Outlook/Teams/Portal access landed in this group, not the conditional
+Stage 2 list below, because they're **universal** (every hire needs
+them) rather than role/department-conditional - same reasoning that
+already put the original Windows/Email/Okta bundle here.
+
+**Independent, non-blocking** (`IT_INFRASTRUCTURE`, doesn't gate
+anything, doesn't block Stage 3 either):
+
+- Equipment Issued - new; today the intake form's Hardware &
+  Workstation Need field only captures what was *requested*, nothing
+  confirms it was actually handed to the employee.
+
+**Stage 2 - Role/Department-Conditional Access** (blocked until the
+Stage 1 handoff fires):
+
+- NextGen Server Login Account Created - `IT_INFRASTRUCTURE`, always
+- NextGen Application User Account Created - `EHR_ADMIN`, always
+- Dexis Imaging Access Setup - `IT_INFRASTRUCTURE`, Dental only
+  (unchanged from v1)
+- FastAttach Access Setup - `IT_INFRASTRUCTURE`, Dental only (unchanged)
+- QuickBooks Base Access Granted - `IT_INFRASTRUCTURE`, Finance-track
+  only
+- QuickBooks Application Setup - new `FINANCE_ADMIN` role
+  (`OnboardingAssignedRole`), Finance-track only
+
+**Finance-track trigger**: matched on `job_title` containing "finance"
+(case-insensitive), not an exact match against the literal string
+"Administrative - Finance" - the user's own answer named that specific
+title, but matching the substring instead means any future finance-track
+title (Accountant, Finance Clerk, etc.) is covered automatically without
+someone remembering to special-case it later. Deliberately not a new
+Department value or a dedicated checkbox on the intake form (unlike the
+Dental block) - `job_title` already carries this signal once assigned.
+
+**Stage 3 - Training** - unchanged: blocked until every Stage 2 task for
+that candidate completes. Equipment Issued does NOT count toward this
+gate (issuing a laptop late shouldn't hold up clinical training).
+
+### Mechanical redesign this forces
+
+v1's `triggers_stage1_handoff` marks exactly one task, and
+`POST .../complete-stage1` is literally what completes it - the PATCH
+endpoint explicitly refuses to complete that task any other way. With
+six tasks in the gating group instead of one, that mechanism inverts:
+
+- `PATCH /onboarding/tasks/{id}` stops special-casing Stage 1 tasks -
+  all six become completable through the ordinary status dropdown, same
+  as any other task.
+- `POST /onboarding/candidates/{id}/complete-stage1` stops completing a
+  task itself. It becomes a **guard + action**: 400 if any task with
+  `triggers_stage1_handoff=True` for this candidate isn't already
+  `completed` (naming a task-name list of what's still open in the
+  error, not just a bare rejection); if all six are done, proceeds
+  exactly as today - generate the suggested email + temp password,
+  unblock Stage 2, notify configured recipients.
+- Frontend: the "Complete Stage 1 & Notify Stakeholders" button is
+  disabled/hidden until all six are checked, rather than clickable and
+  failing with a 400 - a technician shouldn't discover the requirement
+  by hitting an error.
+- `triggers_stage1_handoff` keeps its column name despite no longer
+  matching exactly one row - renaming it would need a migration for a
+  cosmetic gain only; the docstring/comment gets updated to explain the
+  broadened meaning instead.
+- `_recompute_candidate_stage`'s stage-2/training groupings need
+  Equipment Issued explicitly excluded (it shares `IT_INFRASTRUCTURE`
+  with several Stage 2 tasks, so role alone can't distinguish it -
+  excluded by task name, matching how `triggers_stage1_handoff` is
+  already a name/flag-based marker rather than a new column).
+
+### Explicitly not changed
+
+- No new `OnboardingNotificationRecipient` trigger type for Stage
+  2/QuickBooks completion - `batch_submitted` and `stage1_complete`
+  remain the only two triggers; nobody's asked for a notification at
+  this finer grain yet.
+- `OnboardingCandidate.stage`'s four values (`it_identity` /
+  `ehr_provisioning` / `clinical_training` / `ready`) are unchanged -
+  more tasks within a stage doesn't need more stages.

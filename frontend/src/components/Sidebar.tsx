@@ -16,6 +16,13 @@ type Props = {
 
 const COLLAPSE_KEY = "sidebar_collapsed";
 
+// The feature is fully built and shipped, just being held back from this
+// release - flip to true to bring the sidebar entry back rather than
+// re-adding the block below. The /onboarding routes themselves are NOT
+// gated by this (still reachable by direct link/bookmark for anyone who
+// already knows the URL) - only its discoverability in the nav is hidden.
+const ONBOARDING_NAV_ENABLED = false;
+
 type FlyoutChild = { href: string; label: string; active: boolean; dataTour?: string };
 
 /**
@@ -225,8 +232,10 @@ export default function Sidebar({ role, onHelpClick }: Props) {
 
           {/* HR (Kim) submits onboarding batches; technician/admin work the
               resulting Stage 1/2/3 task queue. Hidden for plain requesters -
-              this isn't a self-service feature the way Tickets is. */}
-          {(role === "hr" || role === "technician" || role === "admin") && (
+              this isn't a self-service feature the way Tickets is. Also
+              gated on ONBOARDING_NAV_ENABLED above - held back from this
+              release. */}
+          {ONBOARDING_NAV_ENABLED && (role === "hr" || role === "technician" || role === "admin") && (
             <Link href="/onboarding" className={linkClass(isOnboarding)} title="Onboarding">
               <span aria-hidden>🧑‍💼</span>
               {label("Onboarding")}
