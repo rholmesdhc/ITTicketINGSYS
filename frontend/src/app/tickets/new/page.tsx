@@ -11,6 +11,13 @@ import Sidebar from "@/components/Sidebar";
 // truth the backend validates against.
 const FALLBACK_CATEGORIES = ["Hardware/Workstation", "Software", "EHR/NextGen", "Network/Connectivity", "Telecom"];
 
+// Keep in sync with backend/schemas.py's TicketCreate - the actual
+// enforcement point (also covers the MCP tool, which shares that schema).
+// maxLength here is a UX nicety (stops typing at the limit, shows a
+// counter) - it's not what makes the limit real.
+const TITLE_MAX_LENGTH = 150;
+const DESCRIPTION_MAX_LENGTH = 5000;
+
 // One-click starting points for the issues that make up most real ticket
 // volume (see the recurring titles in production data: password resets,
 // screen problems, shared mailbox access, NextGen access issues). Pre-fills
@@ -28,11 +35,11 @@ type Template = {
 const ISSUE_TEMPLATES: Template[] = [
   {
     icon: "🔑",
-    label: "Reset My Password",
-    title: "Need my login password reset",
-    category: "Hardware/Workstation",
+    label: "Reset Nextgen Password",
+    title: "Need my NextGen password reset",
+    category: "EHR/NextGen",
     priority: "P4",
-    description: "I'm locked out of my account and need my password reset.",
+    description: "I'm locked out of NextGen and need my password reset.",
   },
   {
     icon: "📧",
@@ -51,12 +58,12 @@ const ISSUE_TEMPLATES: Template[] = [
     description: "My monitor isn't displaying correctly - describe the issue (blank screen, flickering, won't turn on, etc.).",
   },
   {
-    icon: "📁",
-    label: "Shared Mailbox/Folder Access",
-    title: "Need access to a shared mailbox or folder",
+    icon: "📠",
+    label: "Scanner Not Working",
+    title: "Scanner isn't working",
     category: "Hardware/Workstation",
     priority: "P4",
-    description: "I need access to a shared mailbox or folder - specify which one.",
+    description: "The scanner isn't working - describe the issue (won't scan, error message, not detected by computer, etc.).",
   },
   {
     icon: "🏥",
@@ -355,8 +362,13 @@ export default function NewTicket() {
             <div className="bg-white dark:bg-slate-800 p-8 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
               <form onSubmit={handleSubmit} className="flex flex-col gap-5">
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Issue Title</label>
-                  <input required type="text" className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none"
+                  <div className="flex items-baseline justify-between mb-1">
+                    <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">Issue Title</label>
+                    <span className={`text-xs ${formData.title.length >= TITLE_MAX_LENGTH ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-slate-400 dark:text-slate-500"}`}>
+                      {formData.title.length}/{TITLE_MAX_LENGTH}
+                    </span>
+                  </div>
+                  <input required type="text" maxLength={TITLE_MAX_LENGTH} className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none"
                          value={formData.title} onChange={e => { setFormData({...formData, title: e.target.value}); setDismissedDuplicateWarning(false); }} />
 
                   {duplicateMatches.length > 0 && !dismissedDuplicateWarning && (
@@ -441,8 +453,13 @@ export default function NewTicket() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">Detailed Description</label>
-                  <textarea required rows={4} className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none"
+                  <div className="flex items-baseline justify-between mb-1">
+                    <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">Detailed Description</label>
+                    <span className={`text-xs ${formData.description.length >= DESCRIPTION_MAX_LENGTH ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-slate-400 dark:text-slate-500"}`}>
+                      {formData.description.length}/{DESCRIPTION_MAX_LENGTH}
+                    </span>
+                  </div>
+                  <textarea required rows={4} maxLength={DESCRIPTION_MAX_LENGTH} className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 rounded-lg focus:ring-2 focus:ring-medical-accent focus:outline-none"
                             value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})}></textarea>
                 </div>
 

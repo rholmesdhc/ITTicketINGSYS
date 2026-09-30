@@ -448,7 +448,12 @@ export default function TicketDetail() {
             {isAdminOrTech && (
               <div className="mt-8 pt-8 border-t border-slate-200 dark:border-slate-700">
                 <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-4">Technician Actions</h3>
-                <div className="flex items-center gap-4">
+                {/* flex-wrap + gap-y - this row was already tight with 3
+                    items at phone width (no wrap = spilling past the
+                    viewport, confirmed visually); adding Created By as a
+                    4th item made it worse, so fixing it here rather than
+                    leaving a regression on the row just touched. */}
+                <div className="flex flex-wrap items-center gap-4 gap-y-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Update Status</label>
                     <select
@@ -494,6 +499,17 @@ export default function TicketDetail() {
                       <option value="email">Email</option>
                       <option value="in_person">In Person</option>
                     </select>
+                  </div>
+                  <div>
+                    {/* Read-only - who filed it, distinct from "Request Came
+                        In Via" (how it reached IT). Reuses requesterEmployee,
+                        already loaded above for the clinic-site fallback. */}
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Created By</label>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-100 py-2">
+                      {requesterEmployee
+                        ? [requesterEmployee.first_name, requesterEmployee.last_name].filter(Boolean).join(" ") || requesterEmployee.email
+                        : "Unknown"}
+                    </p>
                   </div>
                 </div>
 

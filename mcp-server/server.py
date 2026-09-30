@@ -153,8 +153,10 @@ def create_ticket(
     Create a new IT ticket.
 
     Args:
-        title: Short summary of the issue
-        description: Detailed explanation of the problem
+        title: Short summary of the issue (max 150 characters - the backend
+            rejects longer titles with a 422; it's also used as-is in the
+            notification email's subject line, so keep it genuinely short)
+        description: Detailed explanation of the problem (max 5000 characters)
         category: Ticket category - must be exactly one of: 'Hardware/Workstation',
             'Software', 'EHR/NextGen', 'Network/Connectivity', 'Telecom'
             (matches the web app's category list - do not invent other values)
