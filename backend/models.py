@@ -50,6 +50,15 @@ class AppSettings(Base):
     # unless a resolution is already on file (or included in the same
     # request) - see update_ticket in main.py.
     require_resolution_to_resolve = Column(Boolean, default=False, nullable=False)
+    # Tenant-wide visual style for the Dashboard's Key Metrics KPI cards -
+    # "default" (the existing light/dark-aware card) or "glass_amber" (a
+    # fixed dark glassmorphic treatment, not light/dark-adaptive - see
+    # frontend/src/app/globals.css's .kpi-glass-* classes). Admin-set via
+    # Settings, same as require_resolution_to_resolve above - deliberately
+    # NOT a per-user preference like the light/dark toggle (that lives in
+    # ui_preferences, editable by anyone from the sidebar); this is a
+    # whole-org choice of dashboard look.
+    dashboard_theme = Column(String, default="default", nullable=False)
 
 
 class ClinicSite(Base):

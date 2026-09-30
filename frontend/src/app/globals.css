@@ -32,3 +32,138 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/* --- Dashboard "Glass" KPI card themes (Amber / Blue / Green) ---
+   Admin-selected in Settings -> Dashboard Theme (AppSettings.dashboard_theme,
+   see backend/schemas.py's DASHBOARD_THEMES: "glass_amber"/"glass_blue"/
+   "glass_green"), rendered by the Dashboard page. Deliberately NOT
+   light/dark-adaptive like the rest of the app - the reference design is a
+   fixed dark glassmorphic look, so these cards render the same regardless
+   of the site-wide light/dark toggle. Plain CSS classes (not Tailwind
+   @theme tokens) since this is a one-off component treatment, not a
+   general design token other components should reach for.
+
+   .kpi-glass-card carries everything color-agnostic (shape, blur, the
+   frosted-glass mechanics); each color variant (.kpi-glass-amber/-blue/
+   -green) is a SECOND class applied alongside it that supplies only what
+   actually differs per color - background tint, glow color, and the
+   nested .kpi-glass-value/.kpi-glass-icon colors. A card always carries
+   both classes together (see dashboard/page.tsx's GLASS_THEME_CONFIG) -
+   .kpi-glass-card alone has no background/glow of its own. */
+
+.kpi-glass-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  /* Frosted glass: a translucent fill over whatever's behind it, blurred -
+     backdrop-filter is what actually reads as "glass" rather than just a
+     flat dark card. The fill color itself comes from the variant class. */
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+}
+
+/* A pseudo-element (not baked into the variant's own background) so the
+   radial backlight can sit under the decorative chart (z-index 0) without
+   fighting the text content (z-index 1, set inline on that content
+   wrapper) - background itself is set per-variant below. */
+.kpi-glass-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.kpi-glass-value {
+  /* Color set per-variant below - this just carries the glow mechanics
+     shared by all three. */
+  text-shadow: 0 0 24px var(--kpi-glass-glow-soft, transparent);
+}
+
+.kpi-glass-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.5rem;
+}
+
+/* Decorative area-chart wave along the bottom edge - purely visual (static
+   shape, not real KPI history - a deliberate scope decision, not an
+   oversight). Faded via opacity so it reads as "emanating from the bottom
+   edge" rather than a normal chart sitting inside the card. Its actual
+   stroke/fill colors are set inline via Recharts props (see
+   GLASS_THEME_CONFIG in dashboard/page.tsx), not here - CSS can't reach
+   into an SVG gradient stop the way it can a plain background. */
+.kpi-glass-chart {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4.5rem;
+  opacity: 0.55;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* --- Amber (the original) --- */
+.kpi-glass-amber {
+  background: linear-gradient(160deg, rgba(30, 27, 24, 0.92), rgba(20, 18, 17, 0.96));
+  /* Outer glow (subtle, not neon) + an inset top highlight, which is what
+     sells "sleek border stroke with subtle inner glow" - a single flat
+     border reads flat; the inset light-from-above is what makes it look
+     like curved glass catching light. Same box-shadow shape reused by
+     every variant below, just a different glow hue. */
+  box-shadow: 0 0 40px -6px rgba(217, 119, 6, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  --kpi-glass-glow-soft: rgba(255, 190, 120, 0.35);
+}
+.kpi-glass-amber::before {
+  background: radial-gradient(ellipse 80% 65% at 50% 115%, rgba(245, 158, 11, 0.5), transparent 72%);
+}
+.kpi-glass-amber .kpi-glass-value {
+  /* "Bright warm peach" - warmer and lighter than a plain amber/orange so
+     it reads as the clear focal point against the charcoal background. */
+  color: #ffd9b3;
+}
+.kpi-glass-amber .kpi-glass-icon {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+/* --- Blue --- */
+.kpi-glass-blue {
+  background: linear-gradient(160deg, rgba(15, 23, 34, 0.92), rgba(9, 15, 24, 0.96));
+  box-shadow: 0 0 40px -6px rgba(14, 165, 233, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  --kpi-glass-glow-soft: rgba(125, 211, 252, 0.4);
+}
+.kpi-glass-blue::before {
+  background: radial-gradient(ellipse 80% 65% at 50% 115%, rgba(56, 189, 248, 0.5), transparent 72%);
+}
+.kpi-glass-blue .kpi-glass-value {
+  color: #c2e8ff;
+}
+.kpi-glass-blue .kpi-glass-icon {
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+/* --- Green --- */
+.kpi-glass-green {
+  background: linear-gradient(160deg, rgba(14, 26, 21, 0.92), rgba(9, 18, 15, 0.96));
+  box-shadow: 0 0 40px -6px rgba(16, 185, 129, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  --kpi-glass-glow-soft: rgba(110, 231, 183, 0.4);
+}
+.kpi-glass-green::before {
+  background: radial-gradient(ellipse 80% 65% at 50% 115%, rgba(52, 211, 153, 0.5), transparent 72%);
+}
+.kpi-glass-green .kpi-glass-value {
+  color: #bdf5da;
+}
+.kpi-glass-green .kpi-glass-icon {
+  background: rgba(52, 211, 153, 0.15);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}

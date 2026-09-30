@@ -22,6 +22,7 @@ export default function Settings() {
   const router = useRouter();
   const [role, setRole] = useState<string | null>(null);
   const [requireResolution, setRequireResolution] = useState(false);
+  const [dashboardTheme, setDashboardTheme] = useState("default");
   const [loaded, setLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ state: "idle" });
 
@@ -75,7 +76,10 @@ export default function Settings() {
         return res.ok ? res.json() : null;
       })
       .then(data => {
-        if (data) setRequireResolution(data.require_resolution_to_resolve);
+        if (data) {
+          setRequireResolution(data.require_resolution_to_resolve);
+          if (data.dashboard_theme) setDashboardTheme(data.dashboard_theme);
+        }
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -328,6 +332,36 @@ export default function Settings() {
     }
   };
 
+  // Tenant-wide, same PATCH /settings endpoint and optimistic-save pattern
+  // as handleToggle above - see AppSettings.dashboard_theme's docstring for
+  // why this lives here (admin-set, app-wide) rather than next to the
+  // sidebar's per-user light/dark ThemeToggle.
+  const handleDashboardThemeChange = async (next: string) => {
+    if (next === dashboardTheme) return;
+    const prev = dashboardTheme;
+    setDashboardTheme(next); // optimistic - reverted below on failure
+    setSaveStatus({ state: "saving", message: "Saving..." });
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ dashboard_theme: next }),
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok) {
+        setSaveStatus({ state: "saved", message: "Saved" });
+        setTimeout(() => setSaveStatus({ state: "idle" }), 2000);
+      } else {
+        setDashboardTheme(prev);
+        setSaveStatus({ state: "error", message: "Failed to save" });
+      }
+    } catch (e) {
+      setDashboardTheme(prev);
+      setSaveStatus({ state: "error", message: "Failed to save - check your connection" });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex">
       <Sidebar role={role} />
@@ -378,6 +412,64 @@ export default function Settings() {
                   }`}
                 />
               </button>
+            </div>
+          </div>
+        )}
+
+        {loaded && (
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-8 mt-6">
+            <h3 className="text-sm font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">Dashboard Theme</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              Applies to the Key Metrics cards on everyone's Dashboard - this is an app-wide choice, not a
+              personal preference like the light/dark toggle.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <button
+                type="button"
+                onClick={() => handleDashboardThemeChange("default")}
+                aria-pressed={dashboardTheme === "default"}
+                className={`text-left rounded-xl border-2 p-4 cursor-pointer transition-colors ${
+                  dashboardTheme === "default" ? "border-medical-blue" : "border-transparent hover:border-slate-200 dark:hover:border-slate-600"
+                }`}
+              >
+                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm p-4 mb-3 pointer-events-none">
+                  <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Open Tickets</p>
+                  <p className="text-2xl font-bold text-amber-500 dark:text-amber-400 mt-1">12</p>
+                  <span className="text-[10px] text-emerald-600 mt-1 block">▲ 3 vs last week</span>
+                </div>
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Default {dashboardTheme === "default" && <span className="text-medical-blue dark:text-medical-accent">(Active)</span>}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Follows the site's light/dark setting.</p>
+              </button>
+
+              {/* Amber/Blue/Green all share the same preview markup - only
+                  the theme value, display name, and .kpi-glass-* color
+                  class (see globals.css) differ between them. */}
+              {[
+                { theme: "glass_amber", name: "Glass Amber", cssClass: "kpi-glass-amber" },
+                { theme: "glass_blue", name: "Glass Blue", cssClass: "kpi-glass-blue" },
+                { theme: "glass_green", name: "Glass Green", cssClass: "kpi-glass-green" },
+              ].map(opt => (
+                <button
+                  key={opt.theme}
+                  type="button"
+                  onClick={() => handleDashboardThemeChange(opt.theme)}
+                  aria-pressed={dashboardTheme === opt.theme}
+                  className={`text-left rounded-xl border-2 p-4 cursor-pointer transition-colors ${
+                    dashboardTheme === opt.theme ? "border-medical-blue" : "border-transparent hover:border-slate-200 dark:hover:border-slate-600"
+                  }`}
+                >
+                  <div className={`kpi-glass-card ${opt.cssClass} !p-4 mb-3 pointer-events-none`}>
+                    <div className="relative z-10">
+                      <span className="kpi-glass-icon text-xs" aria-hidden>🎫</span>
+                      <p className="text-[10px] font-semibold text-white/50 uppercase mt-2">Open Tickets</p>
+                      <p className="kpi-glass-value text-2xl font-bold mt-1">12</p>
+                      <span className="text-[10px] text-emerald-300 mt-1 block">▲ 3 vs last week</span>
+                    </div>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{opt.name} {dashboardTheme === opt.theme && <span className="text-medical-blue dark:text-medical-accent">(Active)</span>}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Fixed dark glassmorphic look, regardless of light/dark setting.</p>
+                </button>
+              ))}
             </div>
           </div>
         )}

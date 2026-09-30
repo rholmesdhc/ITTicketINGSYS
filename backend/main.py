@@ -308,7 +308,7 @@ def get_app_settings(db: Session) -> models.AppSettings:
     # hasn't been migrated yet - matches this app's general pattern of
     # degrading gracefully instead of hard-failing on missing config.
     settings = db.query(models.AppSettings).first()
-    return settings or models.AppSettings(require_resolution_to_resolve=False)
+    return settings or models.AppSettings(require_resolution_to_resolve=False, dashboard_theme="default")
 
 @app.get("/settings", response_model=schemas.AppSettingsResponse)
 def read_settings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):

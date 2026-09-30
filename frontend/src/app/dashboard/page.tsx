@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { API_BASE_URL, isUnauthorized, updateUserPreferences } from "@/lib/api";
 import { isOverdue } from "@/lib/ticketSla";
 import OnboardingWizard from "@/components/OnboardingWizard";
@@ -79,6 +79,73 @@ function MetricInfo({ text }: { text: string }) {
         {text}
       </span>
     </span>
+  );
+}
+
+// Purely decorative wave shapes for the Glass theme's bottom-edge chart
+// (see globals.css's .kpi-glass-chart) - NOT real KPI history (see the
+// "decorative only" scope decision). A handful of static shapes, picked
+// per-card by a simple id hash, just so the 4 cards don't all render an
+// identical wave.
+const GLASS_WAVE_SHAPES: number[][] = [
+  [4, 6, 5, 8, 7, 10, 9, 13, 11, 15],
+  [8, 5, 9, 6, 11, 8, 14, 10, 12, 16],
+  [6, 9, 7, 11, 8, 12, 10, 9, 13, 15],
+  [10, 7, 12, 9, 8, 11, 9, 14, 12, 17],
+];
+
+function glassWaveData(seed: string) {
+  const idx = seed.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % GLASS_WAVE_SHAPES.length;
+  return GLASS_WAVE_SHAPES[idx].map((v, i) => ({ i, v }));
+}
+
+// One entry per value in backend/schemas.py's DASHBOARD_THEMES (excluding
+// "default", which never reaches GlassKpiCard at all). `cssClass` is the
+// color variant applied alongside the color-agnostic .kpi-glass-card (see
+// globals.css); `chartColor` feeds the decorative area-chart's SVG
+// gradient/stroke directly, since CSS can't reach into an SVG gradient
+// stop the way it can a plain background.
+const GLASS_THEME_CONFIG: Record<string, { cssClass: string; chartColor: string }> = {
+  glass_amber: { cssClass: "kpi-glass-amber", chartColor: "#f59e0b" },
+  glass_blue: { cssClass: "kpi-glass-blue", chartColor: "#38bdf8" },
+  glass_green: { cssClass: "kpi-glass-green", chartColor: "#34d399" },
+};
+
+/** One Key Metrics card in a "Glass" dashboard theme (see globals.css's
+ * .kpi-glass-* classes and AppSettings.dashboard_theme) - frosted glass, a
+ * color-tinted bottom-glow, and a decorative area-chart wave along the
+ * bottom edge. Content sits in its own `relative z-10` wrapper so it
+ * stacks above both the ::before glow layer and the absolutely-positioned
+ * chart, both of which are z-index 0. */
+function GlassKpiCard({ title, tooltip, icon, value, trend, cardId, theme, extraClassName }: {
+  title: string; tooltip: string; icon: string; value: number | string; trend: React.ReactNode; cardId: string; theme: string; extraClassName?: string;
+}) {
+  const config = GLASS_THEME_CONFIG[theme] || GLASS_THEME_CONFIG.glass_amber;
+  return (
+    <div className={`kpi-glass-card ${config.cssClass} ${extraClassName || ""}`}>
+      <div className="relative z-10">
+        <span className="kpi-glass-icon" aria-hidden>{icon}</span>
+        <h3 className="text-xs font-semibold text-white/50 uppercase tracking-wide mt-3">
+          {title}
+          <MetricInfo text={tooltip} />
+        </h3>
+        <p className="kpi-glass-value text-3xl font-bold mt-1">{value}</p>
+        {trend}
+      </div>
+      <div className="kpi-glass-chart">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={glassWaveData(cardId)} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id={`glassGrad-${cardId}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={config.chartColor} stopOpacity={0.6} />
+                <stop offset="100%" stopColor={config.chartColor} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Area type="monotone" dataKey="v" stroke={config.chartColor} strokeWidth={2} fill={`url(#glassGrad-${cardId})`} isAnimationActive={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
 
@@ -166,6 +233,20 @@ export default function Dashboard() {
       .catch(() => {});
   }, []);
 
+  // Tenant-wide (not per-user) - see AppSettings.dashboard_theme's
+  // docstring. Any authenticated role can read GET /settings already
+  // (requesters need require_resolution_to_resolve too), so no role check
+  // needed here.
+  const [dashboardTheme, setDashboardTheme] = useState("default");
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    fetch(`${API_BASE_URL}/settings`, { headers: { "Authorization": `Bearer ${token}` } })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (data?.dashboard_theme) setDashboardTheme(data.dashboard_theme); })
+      .catch(() => {});
+  }, []);
+
   const handleCloseWizard = () => {
     setIsWizardOpen(false);
     if (userId) localStorage.setItem(`onboarding_seen_${userId}`, "1");
@@ -223,6 +304,24 @@ export default function Dashboard() {
     const color = isGood === null ? "text-slate-500" : isGood ? "text-emerald-600" : "text-red-600";
     return (
       <span className={`text-xs font-semibold mt-1 block ${color}`}>
+        {isUp ? "▲" : "▼"} {Math.abs(delta)} vs last week
+      </span>
+    );
+  };
+
+  // Same trend semantics as renderTrend above, restyled for the always-dark
+  // glass card background - renderTrend's colors (text-slate-500,
+  // text-emerald-600) are tuned for light backgrounds with a dark: variant
+  // for the site's toggleable dark mode; the glass theme doesn't toggle
+  // with that, so it needs its own fixed-dark-appropriate palette rather
+  // than reusing those classes directly.
+  const renderGlassTrend = (delta: number, goodDirection: "up" | "down" | "neutral") => {
+    if (delta === 0) return <span className="text-xs text-white/40 mt-1 block relative z-10">No change vs last week</span>;
+    const isUp = delta > 0;
+    const isGood = goodDirection === "neutral" ? null : (goodDirection === "up") === isUp;
+    const color = isGood === null ? "text-white/50" : isGood ? "text-emerald-300" : "text-red-300";
+    return (
+      <span className={`text-xs font-semibold mt-1 block relative z-10 ${color}`}>
         {isUp ? "▲" : "▼"} {Math.abs(delta)} vs last week
       </span>
     );
@@ -433,6 +532,36 @@ export default function Dashboard() {
     },
   ];
 
+  // Same ids/data as kpiCardDefs above (reuses the exact same computed
+  // values - openTickets, highPriorityTrend, avgResolutionDays, etc. - and
+  // the exact same drag/reorder/hide machinery below, which is keyed by
+  // id) - just a different visual treatment for the Glass Amber theme.
+  // Kept as a fully separate array rather than refactoring kpiCardDefs into
+  // a shared data-only shape both themes render from - that refactor would
+  // touch a lot of already-working, bespoke-per-card logic (Overdue's
+  // data-dependent border color, Resolved's avgResolutionDays-or-trend
+  // branch) for a two-theme app; worth revisiting if a third theme shows up.
+  const glassCardDefs: { id: string; title: string; tooltip: string; icon: string; value: number | string; trend: React.ReactNode }[] = isAdminOrTech ? [
+    { id: "open", title: "Open Tickets", tooltip: "Tickets currently in the Open status - not yet started or in progress.", icon: "🎫", value: openTickets, trend: renderGlassTrend(openTrend, "down") },
+    { id: "high_priority", title: "High Priority", tooltip: "Tickets marked P1 (critical patient-care impact) or P2 (major disruption), regardless of status.", icon: "🔥", value: highPriorityTickets, trend: renderGlassTrend(highPriorityTrend, "down") },
+    { id: "total", title: "Total Tickets", tooltip: "Every ticket ever filed, regardless of status.", icon: "📊", value: totalTickets, trend: renderGlassTrend(totalTrend, "neutral") },
+    { id: "resolved", title: "Resolved", tooltip: "Tickets marked Resolved. The trend compares tickets resolved this week to last week.", icon: "✅", value: resolvedTickets, trend: renderGlassTrend(resolvedTrend, "up") },
+  ] : [
+    { id: "my_open", title: "My Open Tickets", tooltip: "Your own tickets that aren't resolved yet - either Open or In Progress.", icon: "🎫", value: myActiveTickets, trend: renderGlassTrend(openTrend, "down") },
+    {
+      id: "overdue", title: "Overdue", tooltip: "Your tickets that have passed their SLA deadline without being resolved.", icon: "⏰",
+      value: overdueTickets.length,
+      trend: <span className="text-xs text-white/40 mt-1 block relative z-10">{overdueTickets.length > 0 ? "Past their SLA deadline" : "Nothing past deadline"}</span>,
+    },
+    {
+      id: "resolved", title: "Resolved", tooltip: "Your tickets marked Resolved. Shows your average time to resolution once you have at least one.", icon: "✅",
+      value: resolvedTickets,
+      trend: avgResolutionDays != null
+        ? <span className="text-xs text-white/40 mt-1 block relative z-10">Avg. {avgResolutionDays < 1 ? "under a day" : `${avgResolutionDays.toFixed(1)} days`} to resolve</span>
+        : renderGlassTrend(resolvedTrend, "up"),
+    },
+  ];
+
   const kpiDefaultOrder = kpiCardDefs.map(c => c.id);
   // A saved order wins for any id it recognizes; anything it doesn't - a
   // card added since the user last reordered, or the user's whole
@@ -558,8 +687,21 @@ export default function Dashboard() {
                       }`}
                     >
                       {visibleKpiOrder.map(id => {
+                        const isGlass = dashboardTheme in GLASS_THEME_CONFIG;
                         const card = kpiCardDefs.find(c => c.id === id);
-                        if (!card) return null;
+                        const glassCard = glassCardDefs.find(c => c.id === id);
+                        if (!card || (isGlass && !glassCard)) return null;
+                        // Overdue's red-border highlight is data-dependent
+                        // (only when something's actually overdue) - the
+                        // default theme already bakes this into card.className;
+                        // the glass card has no per-id className of its own,
+                        // so it's applied here instead of duplicating that
+                        // condition into glassCardDefs.
+                        // border-color (not ring-*/box-shadow) - .kpi-glass-card
+                        // already sets its own box-shadow for the glow/inset
+                        // highlight; a Tailwind ring utility would clobber
+                        // that property instead of layering on top of it.
+                        const glassHighlight = id === "overdue" && overdueTickets.length > 0 ? "!border-red-500/50" : "";
                         return (
                           <div
                             key={id}
@@ -569,19 +711,27 @@ export default function Dashboard() {
                             onDrop={handleKpiDrop(id)}
                             onDragEnd={() => setDraggedKpiCardId(null)}
                             title="Drag to reorder"
-                            className={`${card.className} relative cursor-grab active:cursor-grabbing transition-opacity ${draggedKpiCardId === id ? "opacity-40" : ""}`}
+                            className={`${isGlass ? "" : card.className} relative cursor-grab active:cursor-grabbing transition-opacity ${draggedKpiCardId === id ? "opacity-40" : ""}`}
                           >
                             {visibleKpiOrder.length > 1 && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleRemoveKpiCard(id); }}
                                 title="Remove this card"
                                 aria-label={`Remove ${card.title} card`}
-                                className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded text-slate-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-900/30 cursor-pointer text-sm leading-none"
+                                className={`absolute top-2 right-2 z-10 w-5 h-5 flex items-center justify-center rounded cursor-pointer text-sm leading-none ${
+                                  isGlass
+                                    ? "text-white/30 hover:text-red-300 hover:bg-red-500/20"
+                                    : "text-slate-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-900/30"
+                                }`}
                               >
                                 ✕
                               </button>
                             )}
-                            {card.node}
+                            {isGlass && glassCard ? (
+                              <GlassKpiCard title={glassCard.title} tooltip={glassCard.tooltip} icon={glassCard.icon} value={glassCard.value} trend={glassCard.trend} cardId={glassCard.id} theme={dashboardTheme} extraClassName={glassHighlight} />
+                            ) : (
+                              card.node
+                            )}
                           </div>
                         );
                       })}

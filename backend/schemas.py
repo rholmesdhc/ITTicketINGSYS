@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -27,13 +27,28 @@ class ClinicSiteResponse(ClinicSiteBase):
     class Config:
         from_attributes = True
 
+# Keep in sync with frontend/src/app/globals.css's .kpi-glass-* classes AND
+# dashboard/page.tsx's GLASS_THEME_CONFIG - a new theme name needs both a
+# matching CSS color variant and a chart-color config entry before it's
+# added here, not just a new allowed string.
+DASHBOARD_THEMES = ("default", "glass_amber", "glass_blue", "glass_green")
+
 class AppSettingsResponse(BaseModel):
     require_resolution_to_resolve: bool
+    dashboard_theme: str
     class Config:
         from_attributes = True
 
 class AppSettingsUpdate(BaseModel):
     require_resolution_to_resolve: Optional[bool] = None
+    dashboard_theme: Optional[str] = None
+
+    @field_validator("dashboard_theme")
+    @classmethod
+    def validate_dashboard_theme(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in DASHBOARD_THEMES:
+            raise ValueError(f"dashboard_theme must be one of: {', '.join(DASHBOARD_THEMES)}")
+        return v
 
 class UserLogin(BaseModel):
     username: str
@@ -98,8 +113,20 @@ class UserDirectoryEntry(BaseModel):
         from_attributes = True
 
 class TicketCreate(BaseModel):
-    title: str
-    description: str
+    # title is used as a short label all over this app - the notification
+    # email subject line (notifications.py's build_ticket_created), ticket
+    # list rows, the dashboard's "Currently Open" panels - an unbounded
+    # title breaks those, not just looks odd. description has real room
+    # (5000, not 150) for a genuine detailed writeup, but still isn't
+    # unbounded - it's sent straight to the external AI triage classifier
+    # (triage.classify_priority) for every requester-filed ticket, and an
+    # enormous paste risks that service's own limits/timeouts. The DB
+    # columns themselves stay unbounded String - Pydantic is the actual
+    # enforcement point for both the web app and the MCP tool, which share
+    # this same schema; a DB-level VARCHAR(n) would be redundant and risks
+    # breaking on any pre-existing row already longer than this.
+    title: str = Field(..., max_length=150)
+    description: str = Field(..., max_length=5000)
     category: str
     # Optional here, not required: requesters don't send one at all (the
     # server decides via AI triage - see triage.py/create_ticket), while
