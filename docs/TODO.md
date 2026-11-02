@@ -198,6 +198,36 @@ ships, so there's a record of when/why.
       of guard already used for blocked/already-done tasks, so a
       technician can't keep working a cancelled hire's checklist by
       mistake.
+- [ ] On the New Ticket form, let staff set "Reported By" and "Request Came
+      In Via" at creation time, not only afterward on the ticket detail
+      page. Today: `intake_channel` ("Request Came In Via") is staff-only,
+      detail-page-only, set via `PATCH /tickets/{id}` - deliberately moved
+      *off* the new-ticket form once already, per an earlier explicit
+      correction ("a technician setting this after the fact... fits better
+      than cluttering the intake form" - see the Done section's "Capture
+      how a ticket request came in" entry). Revisiting that now because
+      "Reported By" exposes the real gap the earlier version didn't: a
+      tech taking a phone call today has no way to file the ticket as
+      coming from the caller - `requester_id` is always whoever's logged
+      in (the technician), with no field to override it. The existing
+      "Affected Employee" picker is a different concept (who the issue is
+      about, not who's reporting it) and doesn't solve this.
+
+      Real design questions before building, not just wiring up two
+      fields: (1) "Reported By" needs a new staff-only field on
+      `TicketCreate` (e.g. `reported_by_user_id`) that overrides
+      `requester_id` server-side - requesters filing their own ticket
+      must never be able to set this themselves; (2) whether "Affected
+      Employee" should auto-default to the same person once "Reported By"
+      is set, since the caller and the affected employee are the same
+      person far more often than not; (3) a "Reported By" picker is just
+      `EmployeeEmailSelect` again, so it inherits the exact same
+      local-directory-only limitation already logged above (can't pick
+      someone who's never logged into the portal) - worth fixing that
+      once, not twice; (4) whether showing "Request Came In Via" on the
+      creation form should be conditioned on "Reported By" actually being
+      set (it's meaningless for a self-filed online ticket) rather than
+      always visible and mostly ignored.
 ## Done
 
 - [x] Implement the Employee IT Onboarding Workflow - shipped 2026-09-15.
@@ -252,3 +282,67 @@ ships, so there's a record of when/why.
       given technician access), set to `technician` to match, both local
       dev id 218 and UAT id 85. Same `entra_object_id`-is-null situation as
       Candace/Shanika above, now resolved the same way.
+- [x] Add an admin-configurable Dashboard Theme - shipped 2026-09-30.
+      New `AppSettings.dashboard_theme` (app-wide, admin-set via Settings
+      → Dashboard Theme, distinct from the existing per-user light/dark
+      `ThemeToggle`). Three options beyond the existing default look -
+      Glass Amber/Blue/Green - a frosted-glass treatment applied only to
+      the Dashboard's Key Metrics KPI cards (fixed-dark, not light/dark-
+      adaptive), with a decorative area-chart wave reusing Recharts.
+      `globals.css` splits the styling into a color-agnostic base plus
+      three color variants, so a future color is one CSS block + one
+      `GLASS_THEME_CONFIG` entry, not a duplicated card. No migration
+      needed for future theme names - validated in Pydantic, not a
+      Postgres enum.
+- [x] Add an onboarding progress timeline - shipped 2026-09-30. New
+      `OnboardingStageProgress` component: a 4-node stage stepper (IT
+      Identity → Access Provisioning → Training → Ready) on the batch
+      detail page, and a compact segmented-bar version on the batch list
+      so an IT Manager/admin can scan every active onboarding's status
+      without opening each one. Caught and fixed a real mobile bug during
+      verification - the stepper's 4th node silently scrolled out of view
+      at phone width with no visual hint.
+- [x] Hide the Employee Onboarding feature from the sidebar for this
+      release - shipped 2026-09-30. `Sidebar.tsx`'s
+      `ONBOARDING_NAV_ENABLED = false` holds the fully-built, fully-
+      verified feature back per "push to next release" - flip the one
+      flag when it ships. The `/onboarding` routes themselves aren't
+      gated, only their sidebar discoverability.
+- [x] Ticket detail/new-ticket UX pass - shipped 2026-09-30. Added a
+      read-only "Created By" field next to "Request Came In Via" on the
+      ticket detail page (found and fixed a real mobile overflow bug on
+      that row while verifying it); capped Issue Title at 150 characters
+      and Detailed Description at 5000 (enforced server-side in
+      `TicketCreate`, covers the MCP tool too, plus a live counter on
+      each field); relabeled two issue-template quick-buttons to match
+      actual usage - "Reset My Password" → "Reset Nextgen Password"
+      (title/category/description updated to match, not just the label)
+      and "Shared Mailbox/Folder Access" → "Scanner Not Working".
+- [x] Draft the production deployment plan and UAT VM runbook - shipped
+      2026-09-30. `docs/production-deployment-plan.md`: full phased
+      timeline (Client Review → Beta Readiness → 2-week Beta → Beta Retro
+      → Azure Container Apps build-out → Go-Live) with a Mermaid Gantt
+      chart and an Acceptance Criteria section (User/Technical Goals
+      tables) the Beta Retro and Production Readiness Review milestones
+      score against directly. `docs/uat-vm-runbook.md`: how to build an
+      equivalent Proxmox VM, reverse-engineered from the live UAT box's
+      actual confirmed configuration - explicitly not a recovered history
+      of how the current VM was built, since no IaC exists for it.
+- [x] Add the ability to archive/hide tickets - shipped 2026-11-02.
+      Pre-go-live ask: let staff pull a ticket out of the day-to-day grid
+      and search without deleting it. New `Ticket.archived_at`/
+      `archived_by_user_id` (audit-trail pattern, not a bare boolean) and
+      dedicated `POST /tickets/{id}/archive`/`/unarchive` endpoints
+      (staff-only, mirrors the existing `reopen_ticket` pattern rather
+      than folding into the generic PATCH). `GET /tickets/` defaults to
+      active-only, with `archived_only=true` for a separate admin/tech
+      view - the Dashboard and Tickets grid both pick this up for free
+      since they share `useTicketsFeed`'s one unfiltered-by-default call.
+      Archived tickets stay reachable by direct ID/link (`GET /tickets/
+      {id}` is deliberately not filtered) - "hidden from browsing, not
+      deleted" per the explicit decision. Frontend: per-ticket Archive/
+      Unarchive on the grid (desktop + mobile) and detail page, a bulk
+      Archive action in the existing bulk toolbar, and a staff-only "Show
+      Archived" toggle with its own bulk Unarchive. Immediately followed
+      by archiving everything currently on UAT so the grid starts clean
+      for go-live, per the original ask.

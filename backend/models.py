@@ -188,11 +188,21 @@ class Ticket(Base):
     # themselves" - the default, common case, not a 4th enum value.
     intake_channel = Column(Enum(IntakeChannel), nullable=True)
 
+    # Null = active (shows in the grid/search as normal). Set when a
+    # technician/admin archives the ticket to pull it out of day-to-day
+    # views without deleting it - still reachable by direct ID/ticket
+    # number. Records who+when rather than a bare boolean, matching this
+    # app's existing audit-trail fields (e.g. OnboardingTask.completed_at/
+    # completed_by_user_id).
+    archived_at = Column(DateTime, nullable=True)
+    archived_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
     requester = relationship("User", back_populates="tickets_submitted", foreign_keys=[requester_id])
     technician = relationship("User", back_populates="tickets_assigned", foreign_keys=[tech_id])
     affected_user = relationship("User", foreign_keys=[affected_user_id])
     clinic_site = relationship("ClinicSite", foreign_keys=[clinic_site_id])
     asset = relationship("Asset", back_populates="tickets")
+    archived_by = relationship("User", foreign_keys=[archived_by_user_id])
 
 
 # --- Employee IT Onboarding (HR-initiated) ---

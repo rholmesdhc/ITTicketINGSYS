@@ -459,14 +459,23 @@ def create_ticket(ticket: schemas.TicketCreate, background_tasks: BackgroundTask
     return db_ticket
 
 @app.get("/tickets/", response_model=list[schemas.TicketResponse])
-def read_tickets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def read_tickets(skip: int = 0, limit: int = 100, archived_only: bool = False, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     query = db.query(models.Ticket)
-    
+
     # Role-based filtering
     if current_user.role in _OWN_TICKETS_ONLY_ROLES:
         query = query.filter(models.Ticket.requester_id == current_user.id)
     # Technicians and Admins see all tickets
-    
+
+    # Default view excludes archived tickets (the grid/dashboard/search
+    # case) - archived_only flips to the opposite, a dedicated "show me
+    # what's archived" view, rather than a merge-everything toggle. A
+    # ticket is never shown in both views at once.
+    if archived_only:
+        query = query.filter(models.Ticket.archived_at.isnot(None))
+    else:
+        query = query.filter(models.Ticket.archived_at.is_(None))
+
     tickets = query.offset(skip).limit(limit).all()
     return tickets
 
@@ -682,6 +691,40 @@ def reopen_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: m
     # unassigning - they already have the context, and dropping it back
     # into the unassigned pool would lose that continuity.
     db_ticket.status = models.TicketStatus.open
+    db.commit()
+    db.refresh(db_ticket)
+    return db_ticket
+
+@app.post("/tickets/{ticket_id}/archive", response_model=schemas.TicketResponse)
+def archive_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    # Staff-only, like update_ticket - a requester shouldn't be able to pull
+    # their own ticket out of the queue. A dedicated endpoint (not a field
+    # on the generic PATCH) matches reopen_ticket above, since this is a
+    # distinct action with its own semantics, not just another field set.
+    if current_user.role not in [models.RoleEnum.technician, models.RoleEnum.admin]:
+        raise HTTPException(status_code=403, detail="Not authorized to archive tickets")
+
+    db_ticket = db.query(models.Ticket).filter(models.Ticket.id == ticket_id).first()
+    if not db_ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    db_ticket.archived_at = datetime.utcnow()
+    db_ticket.archived_by_user_id = current_user.id
+    db.commit()
+    db.refresh(db_ticket)
+    return db_ticket
+
+@app.post("/tickets/{ticket_id}/unarchive", response_model=schemas.TicketResponse)
+def unarchive_ticket(ticket_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role not in [models.RoleEnum.technician, models.RoleEnum.admin]:
+        raise HTTPException(status_code=403, detail="Not authorized to unarchive tickets")
+
+    db_ticket = db.query(models.Ticket).filter(models.Ticket.id == ticket_id).first()
+    if not db_ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    db_ticket.archived_at = None
+    db_ticket.archived_by_user_id = None
     db.commit()
     db.refresh(db_ticket)
     return db_ticket

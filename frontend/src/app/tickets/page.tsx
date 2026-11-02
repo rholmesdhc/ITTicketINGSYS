@@ -231,6 +231,97 @@ export default function Tickets() {
     }
   };
 
+  // Pulls a ticket out of the active grid/search without deleting it -
+  // still reachable by direct ID/ticket number. Dedicated endpoints (not
+  // the general PATCH), same reasoning as handleReopen above.
+  const handleArchive = async (ticketId: number) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}/archive`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok && token) fetchTickets(token);
+    } catch (e) {
+      console.error("Failed to archive ticket", ticketId, e);
+    }
+  };
+
+  const handleUnarchive = async (ticketId: number) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/tickets/${ticketId}/unarchive`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok && token) {
+        fetchTickets(token);
+        fetchArchivedTickets(token);
+      }
+    } catch (e) {
+      console.error("Failed to unarchive ticket", ticketId, e);
+    }
+  };
+
+  // --- Archived view (admin/tech only) - a separate fetch against
+  // ?archived_only=true rather than folding into useTicketsFeed, which
+  // both the Dashboard and this page's normal grid rely on staying
+  // "active tickets only" by default. ---
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedTickets, setArchivedTickets] = useState<any[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [archivedSelectedIds, setArchivedSelectedIds] = useState<Set<number>>(new Set());
+
+  const fetchArchivedTickets = async (token: string) => {
+    setArchivedLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/tickets/?archived_only=true`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok) setArchivedTickets(await res.json());
+    } catch (e) {
+      console.error("Failed to load archived tickets", e);
+    } finally {
+      setArchivedLoading(false);
+    }
+  };
+
+  const toggleShowArchived = () => {
+    const next = !showArchived;
+    setShowArchived(next);
+    setArchivedSelectedIds(new Set());
+    if (next) {
+      const token = localStorage.getItem("token");
+      if (token) fetchArchivedTickets(token);
+    }
+  };
+
+  const toggleSelectArchived = (ticketId: number) => {
+    setArchivedSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(ticketId)) next.delete(ticketId); else next.add(ticketId);
+      return next;
+    });
+  };
+
+  const applyBulkUnarchive = async () => {
+    if (archivedSelectedIds.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    const token = localStorage.getItem("token");
+    await Promise.all(Array.from(archivedSelectedIds).map(id =>
+      fetch(`${API_BASE_URL}/tickets/${id}/unarchive`, { method: "POST", headers: { "Authorization": `Bearer ${token}` } })
+    ));
+    if (token) {
+      fetchTickets(token);
+      fetchArchivedTickets(token);
+    }
+    setArchivedSelectedIds(new Set());
+    setBulkBusy(false);
+  };
+
   // --- Bulk selection (item 10) ---
   const toggleSelectOne = (ticketId: number) => {
     setSelectedIds(prev => {
@@ -262,6 +353,18 @@ export default function Tickets() {
     const tech_id = techValue === "unassigned" ? null : parseInt(techValue);
     const token = localStorage.getItem("token");
     await Promise.all(Array.from(selectedIds).map(id => patchTicket(id, { tech_id })));
+    if (token) fetchTickets(token);
+    clearSelection();
+    setBulkBusy(false);
+  };
+
+  const applyBulkArchive = async () => {
+    if (selectedIds.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    const token = localStorage.getItem("token");
+    await Promise.all(Array.from(selectedIds).map(id =>
+      fetch(`${API_BASE_URL}/tickets/${id}/archive`, { method: "POST", headers: { "Authorization": `Bearer ${token}` } })
+    ));
     if (token) fetchTickets(token);
     clearSelection();
     setBulkBusy(false);
@@ -624,6 +727,12 @@ export default function Tickets() {
                   Assign to me
                 </button>
               )}
+              <button
+                onClick={() => handleArchive(t.id)}
+                className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline cursor-pointer"
+              >
+                Archive
+              </button>
             </div>
           </td>
         )}
@@ -728,6 +837,12 @@ export default function Tickets() {
                 Assign to me
               </button>
             )}
+            <button
+              onClick={() => handleArchive(t.id)}
+              className="shrink-0 text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline cursor-pointer"
+            >
+              Archive
+            </button>
           </div>
         )}
       </div>
@@ -891,7 +1006,92 @@ export default function Tickets() {
                     Reset filters
                   </button>
                 )}
+                {isAdminOrTech && (
+                  <button
+                    onClick={toggleShowArchived}
+                    className={`text-sm px-3 py-2 rounded-lg font-semibold transition-colors cursor-pointer ml-auto ${
+                      showArchived
+                        ? "bg-slate-700 text-white hover:bg-slate-800"
+                        : "border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    {showArchived ? "Hide Archived" : "Show Archived"}
+                  </button>
+                )}
               </div>
+
+              {/* Archived tickets - a separate, dedicated view (not merged
+                  into the active grid/search) since archived tickets stay
+                  reachable by direct ID but shouldn't clutter day-to-day
+                  browsing. Admin/tech only. */}
+              {isAdminOrTech && showArchived && (
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mb-4">
+                  <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3">
+                    <h2 className="font-bold text-slate-800 dark:text-slate-100">Archived Tickets</h2>
+                    {archivedSelectedIds.size > 0 && (
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm text-slate-500 dark:text-slate-400">{archivedSelectedIds.size} selected</span>
+                        <button
+                          disabled={bulkBusy}
+                          onClick={applyBulkUnarchive}
+                          className="text-sm bg-medical-blue hover:bg-medical-dark text-white px-3 py-1.5 rounded font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          Unarchive
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {archivedLoading ? (
+                    <div className="p-6 text-center text-slate-400 dark:text-slate-500">Loading...</div>
+                  ) : archivedTickets.length === 0 ? (
+                    <div className="p-6 text-center text-slate-400 dark:text-slate-500">No archived tickets.</div>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 dark:bg-slate-700/50 text-left text-slate-500 dark:text-slate-400">
+                        <tr>
+                          <th className="p-3 w-8"></th>
+                          <th className="p-3 font-semibold">#</th>
+                          <th className="p-3 font-semibold">Title</th>
+                          <th className="p-3 font-semibold">Status</th>
+                          <th className="p-3 font-semibold">Archived</th>
+                          <th className="p-3 font-semibold text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {archivedTickets.map((t: any) => (
+                          <tr key={t.id} className="border-t border-slate-100 dark:border-slate-700">
+                            <td className="p-3">
+                              <input
+                                type="checkbox"
+                                checked={archivedSelectedIds.has(t.id)}
+                                onChange={() => toggleSelectArchived(t.id)}
+                              />
+                            </td>
+                            <td className="p-3 text-slate-400 dark:text-slate-500">#{t.id}</td>
+                            <td className="p-3">
+                              <Link href={`/tickets/${t.id}`} className="text-medical-blue dark:text-medical-accent hover:underline font-semibold">
+                                {t.title}
+                              </Link>
+                            </td>
+                            <td className="p-3 capitalize text-slate-500 dark:text-slate-400">{t.status.replace("_", " ")}</td>
+                            <td className="p-3 text-slate-400 dark:text-slate-500">
+                              {t.archived_at ? new Date(t.archived_at).toLocaleDateString() : "-"}
+                            </td>
+                            <td className="p-3 text-right">
+                              <button
+                                onClick={() => handleUnarchive(t.id)}
+                                className="text-sm text-medical-blue dark:text-medical-accent hover:underline font-semibold cursor-pointer"
+                              >
+                                Unarchive
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
 
               {/* Bulk action toolbar (item 10) - appears once at least one ticket is selected */}
               {isAdminOrTech && selectedIds.size > 0 && (
@@ -931,6 +1131,14 @@ export default function Tickets() {
                     className="text-sm bg-medical-blue hover:bg-medical-dark text-white px-3 py-1.5 rounded font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   >
                     Apply
+                  </button>
+
+                  <button
+                    disabled={bulkBusy}
+                    onClick={applyBulkArchive}
+                    className="text-sm border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 px-3 py-1.5 rounded font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Archive
                   </button>
 
                   <button onClick={clearSelection} className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer">

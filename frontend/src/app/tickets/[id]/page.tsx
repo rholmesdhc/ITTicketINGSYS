@@ -22,6 +22,7 @@ export default function TicketDetail() {
   const [resolutionDraft, setResolutionDraft] = useState("");
   const [contactPhoneDraft, setContactPhoneDraft] = useState("");
   const [reopening, setReopening] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [requireResolution, setRequireResolution] = useState(false);
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [screenshotUploading, setScreenshotUploading] = useState(false);
@@ -252,6 +253,30 @@ export default function TicketDetail() {
     }
   };
 
+  // Pulls the ticket out of the active grid/search without deleting it -
+  // still reachable here by direct ID. Dedicated endpoints, same pattern
+  // as handleReopen above, staff-only like update_ticket.
+  const handleArchiveToggle = async () => {
+    setArchiving(true);
+    const token = localStorage.getItem("token");
+    const action = ticket.archived_at ? "unarchive" : "archive";
+    try {
+      const res = await fetch(`${API_BASE_URL}/tickets/${ticket.id}/${action}`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (isUnauthorized(res)) return;
+      if (res.ok) {
+        const updated = await res.json();
+        setTicket(updated);
+      }
+    } catch (e) {
+      console.error(`Failed to ${action} ticket`, e);
+    } finally {
+      setArchiving(false);
+    }
+  };
+
   if (!ticket) {
     return <div className="p-10 text-center font-bold text-slate-500 dark:text-slate-400">Loading ticket details...</div>;
   }
@@ -281,6 +306,11 @@ export default function TicketDetail() {
               <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${ticket.priority === 'P1' ? 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-700' : 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100'}`}>
                 {ticket.priority} - {ticket.status.replace("_", " ")}
               </span>
+              {ticket.archived_at && (
+                <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-slate-700 text-white">
+                  Archived
+                </span>
+              )}
               {!isAdminOrTech && ticket.status === "resolved" && (
                 <button
                   onClick={handleReopen}
@@ -510,6 +540,21 @@ export default function TicketDetail() {
                         ? [requesterEmployee.first_name, requesterEmployee.last_name].filter(Boolean).join(" ") || requesterEmployee.email
                         : "Unknown"}
                     </p>
+                  </div>
+                  <div>
+                    {/* Pulls this ticket out of the active grid/search
+                        without deleting it - still reachable right here by
+                        direct link. */}
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Archive</label>
+                    <button
+                      onClick={handleArchiveToggle}
+                      disabled={archiving}
+                      className="text-sm border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 px-4 py-2 rounded font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {archiving
+                        ? (ticket.archived_at ? "Unarchiving..." : "Archiving...")
+                        : (ticket.archived_at ? "Unarchive Ticket" : "Archive Ticket")}
+                    </button>
                   </div>
                 </div>
 

@@ -394,6 +394,9 @@ class TicketResponse(BaseModel):
     # How the request came in - see models.Ticket.intake_channel. Null
     # means the requester filed it online themselves.
     intake_channel: Optional[str] = None
+    # Null = active. See models.Ticket.archived_at.
+    archived_at: Optional[datetime] = None
+    archived_by_user_id: Optional[int] = None
 
     class Config:
         from_attributes = True
