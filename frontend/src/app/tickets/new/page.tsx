@@ -6,10 +6,22 @@ import { API_BASE_URL, isUnauthorized } from "@/lib/api";
 import EmployeeEmailSelect from "@/components/EmployeeEmailSelect";
 import Sidebar from "@/components/Sidebar";
 
-// Fallback only for if /categories can't be reached - keep in sync with
-// TICKET_CATEGORIES in backend/schemas.py, which is the actual source of
-// truth the backend validates against.
-const FALLBACK_CATEGORIES = ["Hardware/Workstation", "Software", "EHR/NextGen", "Network/Connectivity", "Telecom"];
+// Fallback only for if /categories can't be reached - categories are
+// admin-managed (see Settings), so keep this in sync with whatever's
+// actually configured there; it's just a safety net for a failed fetch,
+// not the source of truth the backend validates against.
+const FALLBACK_CATEGORIES = [
+  "EHR/NextGen",
+  "Email",
+  "Employee Onboarding / Offboarding",
+  "Laptop / Desktop",
+  "Network & Internet Connectivity",
+  "Office Phone & Voicemail",
+  "Other / General Request",
+  "Printing",
+  "Scanning",
+  "Third-Party Data Integrations (Quest, Aledade, 340B etc.)",
+];
 
 // Keep in sync with backend/schemas.py's TicketCreate - the actual
 // enforcement point (also covers the MCP tool, which shares that schema).
@@ -45,7 +57,7 @@ const ISSUE_TEMPLATES: Template[] = [
     icon: "📧",
     label: "Email Not Working",
     title: "Trouble sending/receiving email",
-    category: "Hardware/Workstation",
+    category: "Email",
     priority: "P4",
     description: "I'm having trouble with my email - describe what's happening (not receiving, not sending, an error message, etc.).",
   },
@@ -53,7 +65,7 @@ const ISSUE_TEMPLATES: Template[] = [
     icon: "🖥️",
     label: "Screen/Monitor Issue",
     title: "Monitor/screen isn't working",
-    category: "Hardware/Workstation",
+    category: "Laptop / Desktop",
     priority: "P4",
     description: "My monitor isn't displaying correctly - describe the issue (blank screen, flickering, won't turn on, etc.).",
   },
@@ -61,7 +73,7 @@ const ISSUE_TEMPLATES: Template[] = [
     icon: "📠",
     label: "Scanner Not Working",
     title: "Scanner isn't working",
-    category: "Hardware/Workstation",
+    category: "Scanning",
     priority: "P4",
     description: "The scanner isn't working - describe the issue (won't scan, error message, not detected by computer, etc.).",
   },
@@ -77,7 +89,7 @@ const ISSUE_TEMPLATES: Template[] = [
     icon: "🖨️",
     label: "Printer Not Working",
     title: "Printer isn't working",
-    category: "Hardware/Workstation",
+    category: "Printing",
     priority: "P4",
     description: "The printer isn't working - describe the issue (won't print, paper jam, out of toner, error message, etc.).",
   },
@@ -147,7 +159,7 @@ export default function NewTicket() {
   const [formData, setFormData] = useState({
     title: "",
     description: "",
-    category: "Hardware/Workstation",
+    category: "Other / General Request",
     priority: "P4",
     asset_id: ""
   });
@@ -223,7 +235,7 @@ export default function NewTicket() {
   };
 
   const resetForm = () => {
-    setFormData({ title: "", description: "", category: "Hardware/Workstation", priority: "P4", asset_id: "" });
+    setFormData({ title: "", description: "", category: "Other / General Request", priority: "P4", asset_id: "" });
     setAffectedUserId(null);
     setDismissedDuplicateWarning(false);
     setCreatedTicket(null);

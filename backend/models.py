@@ -128,7 +128,7 @@ class Ticket(Base):
     title = Column(String, index=True)
     description = Column(String)
     status = Column(Enum(TicketStatus), default=TicketStatus.open)
-    category = Column(String)  # EHR/NextGen, Hardware/Workstation, Network/Connectivity, Telecom
+    category = Column(String)  # admin-managed - see models.Category, not a fixed set
     priority = Column(Enum(PriorityTier), default=PriorityTier.P4)
     
     created_at = Column(DateTime, default=datetime.utcnow)

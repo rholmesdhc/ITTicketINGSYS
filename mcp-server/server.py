@@ -157,9 +157,15 @@ def create_ticket(
             rejects longer titles with a 422; it's also used as-is in the
             notification email's subject line, so keep it genuinely short)
         description: Detailed explanation of the problem (max 5000 characters)
-        category: Ticket category - must be exactly one of: 'Hardware/Workstation',
-            'Software', 'EHR/NextGen', 'Network/Connectivity', 'Telecom'
-            (matches the web app's category list - do not invent other values)
+        category: Ticket category - must be exactly one of: 'EHR/NextGen', 'Email',
+            'Employee Onboarding / Offboarding', 'Laptop / Desktop',
+            'Network & Internet Connectivity', 'Office Phone & Voicemail',
+            'Other / General Request', 'Printing', 'Scanning',
+            'Third-Party Data Integrations (Quest, Aledade, 340B etc.)'
+            (matches the web app's admin-managed category list - do not invent
+            other values; this list can change if an admin edits it in Settings,
+            so if the backend rejects the category, use the exact names from
+            its error message instead)
         priority: Priority level ('P1', 'P2', 'P3', 'P4')
         asset_id: Optional ID of the affected asset
         affected_employee_email: Optional email of the employee this ticket is
@@ -240,8 +246,12 @@ def search_tickets(
     Args:
         status: Filter by exact status - one of: 'open', 'in_progress', 'resolved'
         priority: Filter by exact priority - one of: 'P1', 'P2', 'P3', 'P4'
-        category: Filter by exact category - one of: 'Hardware/Workstation',
-            'Software', 'EHR/NextGen', 'Network/Connectivity', 'Telecom'
+        category: Filter by exact category - one of: 'EHR/NextGen', 'Email',
+            'Employee Onboarding / Offboarding', 'Laptop / Desktop',
+            'Network & Internet Connectivity', 'Office Phone & Voicemail',
+            'Other / General Request', 'Printing', 'Scanning',
+            'Third-Party Data Integrations (Quest, Aledade, 340B etc.)'
+            (admin-managed - can change; see create_ticket's docstring)
         technician_email: Filter to tickets assigned to this technician's email.
             Use the literal value 'unassigned' to find tickets with no
             technician assigned yet.
