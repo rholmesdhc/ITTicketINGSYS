@@ -542,6 +542,17 @@ export default function Tickets() {
     });
   };
 
+  // Same page-scoped "select all" for the Resolved Tickets section - its
+  // own checkbox since it's a visually separate table/page from the
+  // active one, but shares the same selectedIds set and bulk toolbar.
+  const allResolvedVisibleSelected = pagedResolved.length > 0 && pagedResolved.every(t => selectedIds.has(t.id));
+  const toggleSelectAllResolvedVisible = () => {
+    setSelectedIds(prev => {
+      if (allResolvedVisibleSelected) return new Set();
+      return new Set(pagedResolved.map(t => t.id));
+    });
+  };
+
   // --- Keyboard shortcuts (item 12): act on the current selection ---
   useEffect(() => {
     if (!isAdminOrTech) return;
@@ -1228,7 +1239,7 @@ export default function Tickets() {
                       {sortedResolved.length === 0 ? (
                         <div className="p-6 text-center text-slate-500 dark:text-slate-400">No resolved tickets match the current filters.</div>
                       ) : (
-                        pagedResolved.map(t => renderCard(t, false))
+                        pagedResolved.map(t => renderCard(t, true))
                       )}
                     </div>
                     <div className="md:hidden">
@@ -1236,13 +1247,29 @@ export default function Tickets() {
                     </div>
                     <div className="hidden md:block overflow-x-auto">
                       <table className="w-full text-left border-collapse min-w-[900px]">
+                        {isAdminOrTech && sortedResolved.length > 0 && (
+                          <thead>
+                            <tr className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-600">
+                              <th className="p-4 font-semibold">
+                                <input
+                                  type="checkbox"
+                                  checked={allResolvedVisibleSelected}
+                                  onChange={toggleSelectAllResolvedVisible}
+                                  className="w-4 h-4 cursor-pointer"
+                                  aria-label="Select all visible resolved tickets"
+                                />
+                              </th>
+                              <th colSpan={columnCount - 1}></th>
+                            </tr>
+                          </thead>
+                        )}
                         <tbody>
                           {sortedResolved.length === 0 ? (
                             <tr>
                               <td colSpan={columnCount} className="p-10 text-center text-slate-500 dark:text-slate-400">No resolved tickets match the current filters.</td>
                             </tr>
                           ) : (
-                            pagedResolved.map(t => renderRow(t, false))
+                            pagedResolved.map(t => renderRow(t, true))
                           )}
                         </tbody>
                       </table>
