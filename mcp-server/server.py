@@ -436,5 +436,55 @@ def list_clinic_sites() -> str:
     except Exception as e:
         return f"Failed to fetch clinic sites: {str(e)}"
 
+# Unauthenticated on purpose (see FastMCP.custom_route's own docstring) -
+# this is what the UAT deploy's health check and Docker's own healthcheck
+# hit, neither of which has (or should need) the MCP_API_KEY below.
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):
+    from starlette.responses import JSONResponse
+    return JSONResponse({"status": "ok"})
+
+# MCP_TRANSPORT selects how this process is reachable:
+# - "stdio" (default): the MCP host spawns this script itself and talks to
+#   it over stdin/stdout - how Claude Desktop and local dev use it. No
+#   network exposure, so no separate auth needed.
+# - "streamable-http": runs as a standalone network service (this is what
+#   the UAT docker-compose stack uses, so Jack's host can reach it as a
+#   normal MCP server over HTTP instead of needing to spawn it locally).
+#   Everything under this transport - every tool call - acts with this
+#   service's own Entra/password login, so MCP_API_KEY is mandatory here:
+#   without it, anyone who can reach the port could create/update tickets
+#   as this service account. Deliberately a single static shared secret
+#   checked by hand (not the mcp SDK's full OAuth TokenVerifier/AuthSettings
+#   machinery) - that framework wants a real issuer_url/resource_server_url
+#   for a protected-resource-metadata flow we don't have a use for here.
 if __name__ == "__main__":
-    mcp.run()
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    if transport == "stdio":
+        mcp.run()
+    elif transport == "streamable-http":
+        import uvicorn
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.responses import JSONResponse
+
+        mcp_api_key = os.getenv("MCP_API_KEY", "")
+        if not mcp_api_key:
+            raise RuntimeError(
+                "MCP_API_KEY must be set when MCP_TRANSPORT=streamable-http - "
+                "it's the only thing standing between the network and this "
+                "service account's tools."
+            )
+
+        class BearerAuthMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                if request.url.path == "/health":
+                    return await call_next(request)
+                if request.headers.get("authorization") != f"Bearer {mcp_api_key}":
+                    return JSONResponse({"error": "Unauthorized"}, status_code=401)
+                return await call_next(request)
+
+        app = mcp.streamable_http_app()
+        app.add_middleware(BearerAuthMiddleware)
+        uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("MCP_PORT", "8010")))
+    else:
+        raise RuntimeError(f"Unknown MCP_TRANSPORT '{transport}' - must be 'stdio' or 'streamable-http'")

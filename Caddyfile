@@ -28,3 +28,8 @@
 	tls internal
 	reverse_proxy backend:8005
 }
+
+{$MCP_HOST} {
+	tls internal
+	reverse_proxy mcp-server:8010
+}

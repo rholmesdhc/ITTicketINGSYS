@@ -50,6 +50,15 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/it-ticketing-frontend:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/it-ticketing-frontend:uat-latest
 
+      - name: Build & push mcp-server
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mcp-server
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/it-ticketing-mcp-server:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/it-ticketing-mcp-server:uat-latest
+
   deploy:
     runs-on: [self-hosted, uat]
     needs: build-and-push
@@ -83,6 +92,7 @@ jobs:
           # this step's environment.
           FRONTEND_HOST=$(grep -oP '^FRONTEND_HOST=\K.*' /opt/it-ticketing/.env.uat)
           BACKEND_HOST=$(grep -oP '^BACKEND_HOST=\K.*' /opt/it-ticketing/.env.uat)
+          MCP_HOST=$(grep -oP '^MCP_HOST=\K.*' /opt/it-ticketing/.env.uat)
           for i in $(seq 1 15); do
             curl --fail -sk --resolve "${BACKEND_HOST}:443:127.0.0.1" "https://${BACKEND_HOST}/docs" > /dev/null && backend_ok=1 && break
             sleep 2
@@ -91,8 +101,14 @@ jobs:
             curl --fail -sk --resolve "${FRONTEND_HOST}:443:127.0.0.1" "https://${FRONTEND_HOST}/login" > /dev/null && frontend_ok=1 && break
             sleep 2
           done
-          if [ -z "$backend_ok" ] || [ -z "$frontend_ok" ]; then
-            echo "Health check failed - backend_ok=$backend_ok frontend_ok=$frontend_ok"
+          for i in $(seq 1 15); do
+            # /health is deliberately unauthenticated (see server.py) so
+            # this check needs no MCP_API_KEY.
+            curl --fail -sk --resolve "${MCP_HOST}:443:127.0.0.1" "https://${MCP_HOST}/health" > /dev/null && mcp_ok=1 && break
+            sleep 2
+          done
+          if [ -z "$backend_ok" ] || [ -z "$frontend_ok" ] || [ -z "$mcp_ok" ]; then
+            echo "Health check failed - backend_ok=$backend_ok frontend_ok=$frontend_ok mcp_ok=$mcp_ok"
             docker compose --env-file /opt/it-ticketing/.env.uat -f docker-compose.uat.yml logs --tail=100
             exit 1
           fi

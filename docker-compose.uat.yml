@@ -82,23 +82,52 @@ services:
     expose:
       - "3005"
 
+  # Network-reachable MCP server for external AI hosts (currently "Jack",
+  # on a separate VM on the same network) to call this app's ticketing
+  # tools, instead of needing to spawn this script as a local stdio
+  # subprocess on that same box - see server.py's bottom for the
+  # transport/auth reasoning. Talks to the backend over the compose
+  # network directly (plain HTTP, same as caddy below does) rather than
+  # hairpinning out through its own public HTTPS hostname.
+  mcp-server:
+    image: ghcr.io/${GHCR_OWNER}/it-ticketing-mcp-server:${TAG:-uat-latest}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_API_KEY: ${MCP_API_KEY}
+      API_BASE_URL: http://backend:8005
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
+      ENTRA_MCP_CLIENT_ID: ${ENTRA_MCP_CLIENT_ID}
+      ENTRA_MCP_CLIENT_SECRET: ${ENTRA_MCP_CLIENT_SECRET}
+      ENTRA_WEB_APP_CLIENT_ID: ${ENTRA_WEB_APP_CLIENT_ID}
+    # Not published directly to the host - only caddy is (see below).
+    expose:
+      - "8010"
+
   # Entra requires redirect URIs to be https:// (or exactly
-  # http://localhost) - it flatly rejects plain http:// on any other
-  # host, including private IPs. This terminates TLS (self-signed, see
-  # Caddyfile) in front of both frontend and backend so Entra login can
-  # work on UAT at all; the app containers themselves are unchanged and
-  # still speak plain HTTP internally. Routed by hostname on standard
-  # ports 80/443 - FRONTEND_HOST/BACKEND_HOST need real DNS A-records
-  # pointing at this box (see .env.uat.example).
+  # http://localhost) - it flatly rejects plain http:// on any other host,
+  # including private IPs - which is why frontend/backend need TLS in
+  # front of them at all. mcp-server rides along on the same terminator
+  # for a simpler reason: it's the one service here meant to be called by
+  # something outside this compose network (Jack's host), so its traffic
+  # shouldn't be plaintext either. The app containers themselves are
+  # unchanged and still speak plain HTTP internally (self-signed cert, see
+  # Caddyfile). Routed by hostname on standard ports 80/443 -
+  # FRONTEND_HOST/BACKEND_HOST/MCP_HOST need real DNS A-records pointing
+  # at this box (see .env.uat.example).
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
       - frontend
       - backend
+      - mcp-server
     environment:
       FRONTEND_HOST: ${FRONTEND_HOST}
       BACKEND_HOST: ${BACKEND_HOST}
+      MCP_HOST: ${MCP_HOST}
     ports:
       - "80:80"
       - "443:443"
