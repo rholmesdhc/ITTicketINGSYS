@@ -232,19 +232,19 @@ ships, so there's a record of when/why.
       side is done (mcp-server/Dockerfile, docker-compose.uat.yml,
       Caddyfile, deploy-uat.yml all updated - `server.py` now supports
       `MCP_TRANSPORT=streamable-http` with a mandatory `MCP_API_KEY`
-      bearer check, verified locally), but it can't go live without three
-      manual steps no agent working from this repo can do: (1) add an
-      A-record for `MCP_HOST` (`mcp-uat.ticketing.dhc.org`) pointing at
-      the UAT box, same as the existing FRONTEND_HOST/BACKEND_HOST ones;
-      (2) add `MCP_HOST`, `MCP_API_KEY`, and `ENTRA_MCP_CLIENT_SECRET` to
-      `/opt/it-ticketing/.env.uat` on the VM (see `.env.uat.example` for
-      what each is); (3) reconfigure Jack's host (10.4.2.10) to connect to
+      bearer check). Live and verified on UAT as of 2026-11-04:
+      `MCP_HOST` DNS A-record added (`mcp-uat.ticketing.dhc.org` ->
+      10.4.1.89), `MCP_HOST`/`MCP_API_KEY`/`ENTRA_MCP_CLIENT_SECRET` added
+      to `/opt/it-ticketing/.env.uat`, and
+      `https://mcp-uat.ticketing.dhc.org/health` and `/mcp` both confirmed
+      responding correctly over the real hostname. One step left, outside
+      this repo: reconfigure Jack's host (10.4.2.10) to connect to
       `https://mcp-uat.ticketing.dhc.org/mcp` with
       `Authorization: Bearer <MCP_API_KEY>` instead of spawning
-      `mcp-server/server.py` locally as a stdio subprocess - that's a
-      change on Jack's side, outside this repo. Once all three are done, a
-      normal push to `main` deploys mcp-server right alongside
-      frontend/backend/caddy automatically.
+      `mcp-server/server.py` locally as a stdio subprocess. Once that's
+      done, a normal push to `main` deploys mcp-server right alongside
+      frontend/backend/caddy automatically - no more manual steps needed
+      after that.
 ## Done
 
 - [x] Implement the Employee IT Onboarding Workflow - shipped 2026-09-15.
