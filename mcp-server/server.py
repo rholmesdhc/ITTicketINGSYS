@@ -318,6 +318,7 @@ def search_tickets(
 def update_ticket(
     ticket_id: int,
     status: Optional[str] = None,
+    resolution: Optional[str] = None,
     technician_email: Optional[str] = None,
     affected_employee_email: Optional[str] = None,
     clinic_site_name: Optional[str] = None,
@@ -329,6 +330,11 @@ def update_ticket(
     Args:
         ticket_id: The numeric ticket id to update
         status: New status - one of: 'open', 'in_progress', 'resolved'
+        resolution: Free-text description of how the issue was fixed. Some
+            environments require a non-empty resolution before a ticket can
+            be set to 'resolved' (an existing resolution from a prior update
+            also satisfies this) - if you pass status='resolved' without one
+            and it's required, the backend rejects the call and says so.
         technician_email: Email of the technician to assign this ticket to.
             Use the literal value 'unassign' to clear the current assignment.
         affected_employee_email: Email of the employee this ticket should be
@@ -343,6 +349,9 @@ def update_ticket(
         if status not in TICKET_STATUSES:
             return f"Invalid status '{status}'. Must be one of: {', '.join(TICKET_STATUSES)}"
         payload["status"] = status
+
+    if resolution is not None:
+        payload["resolution"] = resolution
 
     if technician_email is not None:
         if technician_email.strip().lower() == "unassign":
