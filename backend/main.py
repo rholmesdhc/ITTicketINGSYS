@@ -141,10 +141,15 @@ def login_with_entra(payload: schemas.EntraLoginRequest, db: Session = Depends(g
 
     # Match by entra_object_id first (returning user), then by email -
     # this links the 137 existing seeded accounts to their Entra identity
-    # on first login instead of creating duplicates.
+    # on first login instead of creating duplicates. Case-insensitive, same
+    # fix as seed_users.py's existing_user check - a plain == here already
+    # let at least one account (the CSV's rholmes@DeltaHealthCenter.org vs
+    # Entra's lowercased rholmes@deltahealthcenter.org) get silently
+    # duplicated instead of linked, splitting that person's ticket history
+    # across two user rows.
     db_user = db.query(models.User).filter(models.User.entra_object_id == entra_id).first()
     if not db_user:
-        db_user = db.query(models.User).filter(models.User.email == email).first()
+        db_user = db.query(models.User).filter(func.lower(models.User.email) == email).first()
 
     if db_user:
         db_user.entra_object_id = entra_id

@@ -418,7 +418,13 @@ export default function Dashboard() {
   // Item 14: active (non-resolved) ticket count per technician, including
   // techs with zero so a manager can see who has room, not just who's busy.
   const OVERLOAD_THRESHOLD = 5;
+  // Hidden from this widget only (test/dummy technician account, not real
+  // staff whose workload should factor into this panel) - allTechnicians
+  // itself stays untouched since the Tickets page's assign-to dropdowns
+  // share it and should still be able to assign to this account.
+  const HIDDEN_WORKLOAD_EMAILS = new Set(["rholmes+tech@deltahealthcenter.org"]);
   const workload = allTechnicians
+    .filter(tech => !HIDDEN_WORKLOAD_EMAILS.has((directoryMap.get(tech.id)?.email || "").toLowerCase()))
     .map(tech => {
       const count = tickets.filter((t: any) => t.status !== "resolved" && t.tech_id === tech.id).length;
       return { ...tech, count };
