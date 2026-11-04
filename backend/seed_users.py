@@ -9,9 +9,9 @@ import auth
 CSV_FILE_PATH = os.path.join(os.path.dirname(__file__), "data", "DHC_Employees_2.csv")
 
 CLINIC_SITES = [
-    "Cleveland", "Searcy", "Indianola", "Greenville South", 
-    "Greenville Central", "Moorhead", "MVSU / Mississippi Valley State University", 
-    "Rosedale", "Rolling Fork", "Mound Bayou"
+    "Cleveland", "Searcy", "Indianola", "Greenville South",
+    "Greenville Central", "Moorhead", "MVSU / Mississippi Valley State University",
+    "Rosedale", "Rolling Fork", "Mound Bayou", "Itta Bena"
 ]
 
 def seed_users():
