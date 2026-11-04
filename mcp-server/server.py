@@ -483,6 +483,21 @@ if __name__ == "__main__":
                     return JSONResponse({"error": "Unauthorized"}, status_code=401)
                 return await call_next(request)
 
+        # FastMCP("...") above is constructed with its default host
+        # 127.0.0.1, which auto-enables DNS-rebinding protection allowing
+        # only localhost/127.0.0.1 Host headers - so every request arriving
+        # through Caddy as MCP_HOST got 421 "Invalid Host header". Keep the
+        # protection on, but allow the real public hostname as well.
+        # streamable_http_app() reads this setting at call time.
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        mcp_host = os.getenv("MCP_HOST", "")
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["localhost:*", "127.0.0.1:*"] + ([mcp_host, f"{mcp_host}:*"] if mcp_host else []),
+            allowed_origins=[f"https://{mcp_host}"] if mcp_host else [],
+        )
+
         app = mcp.streamable_http_app()
         app.add_middleware(BearerAuthMiddleware)
         uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("MCP_PORT", "8010")))

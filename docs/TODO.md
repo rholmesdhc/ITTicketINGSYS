@@ -232,19 +232,25 @@ ships, so there's a record of when/why.
       side is done (mcp-server/Dockerfile, docker-compose.uat.yml,
       Caddyfile, deploy-uat.yml all updated - `server.py` now supports
       `MCP_TRANSPORT=streamable-http` with a mandatory `MCP_API_KEY`
-      bearer check). Live and verified on UAT as of 2026-11-04:
-      `MCP_HOST` DNS A-record added (`mcp-uat.ticketing.dhc.org` ->
-      10.4.1.89), `MCP_HOST`/`MCP_API_KEY`/`ENTRA_MCP_CLIENT_SECRET` added
-      to `/opt/it-ticketing/.env.uat`, and
-      `https://mcp-uat.ticketing.dhc.org/health` and `/mcp` both confirmed
-      responding correctly over the real hostname. One step left, outside
-      this repo: reconfigure Jack's host (10.4.2.10) to connect to
-      `https://mcp-uat.ticketing.dhc.org/mcp` with
-      `Authorization: Bearer <MCP_API_KEY>` instead of spawning
-      `mcp-server/server.py` locally as a stdio subprocess. Once that's
-      done, a normal push to `main` deploys mcp-server right alongside
-      frontend/backend/caddy automatically - no more manual steps needed
-      after that.
+      bearer check). Deployed to UAT 2026-11-04: `MCP_HOST` DNS A-record
+      added (`mcp-uat.ticketing.dhc.org` -> 10.4.1.89) and
+      `MCP_HOST`/`MCP_API_KEY`/`ENTRA_MCP_CLIENT_SECRET` added to
+      `/opt/it-ticketing/.env.uat`. Correction to the earlier "verified"
+      note: only `/health` and the unauthenticated 401 on `/mcp` had been
+      checked. Found afterwards: (1) `MCP_API_KEY` and
+      `ENTRA_MCP_CLIENT_SECRET` in `.env.uat` were still the literal
+      `.env.uat.example` placeholder text - replaced with real values
+      2026-11-04 (backup `.env.uat.bak-2026-11-04`; the old placeholder now
+      gets 401); (2) every authenticated `/mcp` request got 421 "Invalid
+      Host header" because FastMCP's DNS-rebinding protection only allowed
+      localhost - fixed by passing `MCP_HOST` to the container and allowing
+      it in server.py. Jack's side (10.4.2.10) is ready: code supports
+      `TICKETING_MCP_URL` + `TICKETING_MCP_API_KEY` (key already set,
+      currently commented out in its `.env`), hostname pinned in
+      `/etc/hosts`, Caddy CA trusted via `NODE_EXTRA_CA_CERTS`. Remaining:
+      once this deploy returns 200 for an authenticated `initialize`,
+      uncomment those two lines in Jack's `.env`, restart `jarvis-web`, and
+      verify an end-to-end tool call.
 ## Done
 
 - [x] Implement the Employee IT Onboarding Workflow - shipped 2026-09-15.

@@ -97,6 +97,9 @@ services:
     environment:
       MCP_TRANSPORT: streamable-http
       MCP_API_KEY: ${MCP_API_KEY}
+      # Allowed Host header for server.py's DNS-rebinding check - must match
+      # the hostname Caddy serves this on, or every request gets 421.
+      MCP_HOST: ${MCP_HOST}
       API_BASE_URL: http://backend:8005
       ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
       ENTRA_MCP_CLIENT_ID: ${ENTRA_MCP_CLIENT_ID}
