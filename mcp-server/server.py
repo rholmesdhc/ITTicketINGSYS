@@ -100,6 +100,11 @@ def _get_directory() -> list[dict]:
 def _get_clinic_sites() -> list[dict]:
     return _request_with_retry("GET", "/clinic-sites/").json()
 
+def _get_categories() -> list[dict]:
+    response = _request_with_retry("GET", "/categories")
+    response.raise_for_status()
+    return response.json()
+
 def lookup_employee_id_by_email(email: str) -> Optional[int]:
     """Resolve an employee's email to their user id via /users/directory."""
     for entry in _get_directory():
@@ -157,15 +162,11 @@ def create_ticket(
             rejects longer titles with a 422; it's also used as-is in the
             notification email's subject line, so keep it genuinely short)
         description: Detailed explanation of the problem (max 5000 characters)
-        category: Ticket category - must be exactly one of: 'EHR/NextGen', 'Email',
-            'Employee Onboarding / Offboarding', 'Laptop / Desktop',
-            'Network & Internet Connectivity', 'Office Phone & Voicemail',
-            'Other / General Request', 'Printing', 'Scanning',
-            'Third-Party Data Integrations (Quest, Aledade, 340B etc.)'
-            (matches the web app's admin-managed category list - do not invent
-            other values; this list can change if an admin edits it in Settings,
-            so if the backend rejects the category, use the exact names from
-            its error message instead)
+        category: Ticket category - must exactly match a name returned by
+            list_categories (admin-managed in the web app's Settings, so it
+            changes over time; call list_categories rather than guessing, and
+            never invent a value). It can't be changed after the ticket is
+            created, so choose carefully.
         priority: Priority level ('P1', 'P2', 'P3', 'P4')
         asset_id: Optional ID of the affected asset
         affected_employee_email: Optional email of the employee this ticket is
@@ -246,12 +247,8 @@ def search_tickets(
     Args:
         status: Filter by exact status - one of: 'open', 'in_progress', 'resolved'
         priority: Filter by exact priority - one of: 'P1', 'P2', 'P3', 'P4'
-        category: Filter by exact category - one of: 'EHR/NextGen', 'Email',
-            'Employee Onboarding / Offboarding', 'Laptop / Desktop',
-            'Network & Internet Connectivity', 'Office Phone & Voicemail',
-            'Other / General Request', 'Printing', 'Scanning',
-            'Third-Party Data Integrations (Quest, Aledade, 340B etc.)'
-            (admin-managed - can change; see create_ticket's docstring)
+        category: Filter by exact category name - see list_categories
+            (older tickets may carry names no longer on that list)
         technician_email: Filter to tickets assigned to this technician's email.
             Use the literal value 'unassigned' to find tickets with no
             technician assigned yet.
@@ -435,6 +432,19 @@ def list_clinic_sites() -> str:
         return "\n".join(f"- {s['name']}" for s in sites)
     except Exception as e:
         return f"Failed to fetch clinic sites: {str(e)}"
+
+@mcp.tool()
+def list_categories() -> str:
+    """List the current ticket category names, read live from the ticketing
+    system (admin-managed, so this is the only reliable source). Use these
+    exact names for create_ticket's and search_tickets' category argument."""
+    try:
+        categories = _get_categories()
+        if not categories:
+            return "No categories found."
+        return "\n".join(f"- {c['name']}" for c in categories)
+    except Exception as e:
+        return f"Failed to fetch categories: {str(e)}"
 
 # Unauthenticated on purpose (see FastMCP.custom_route's own docstring) -
 # this is what the UAT deploy's health check and Docker's own healthcheck
