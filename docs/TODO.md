@@ -75,7 +75,12 @@ ships, so there's a record of when/why.
       would need `GroupMember.Read.All` as an application permission -
       separate consent/config from this app's existing delegated scopes -
       just to save one login cycle before the default self-corrects
-      anyway). The stub row's `entra_object_id` IS set immediately from
+      anyway). Update: that permission now already exists for a different
+      reason - the requester auto-sync job (`backend/entra_sync.py`, see
+      Done section) needs the same `GroupMember.Read.All` grant on the
+      Mail Sender app registration, so this picker's live Graph search can
+      reuse that same already-consented credential instead of asking for
+      anything new. The stub row's `entra_object_id` IS set immediately from
       the Graph search result, though - `login_with_entra` already matches
       on `entra_object_id` before falling back to email, so this person's
       real role gets resolved correctly the moment they actually log in,
@@ -251,6 +256,53 @@ ships, so there's a record of when/why.
       once this deploy returns 200 for an authenticated `initialize`,
       uncomment those two lines in Jack's `.env`, restart `jarvis-web`, and
       verify an end-to-end tool call.
+- [ ] Make "Request Came In Via" (`intake_channel`) a required field instead
+      of optional. Not a trivial flip: `intake_channel = null` is currently
+      a meaningful value, not just "unset" - per `models.Ticket`'s own
+      docstring it means "requester filed this online themselves," and the
+      ticket-provenance TODO above already plans to render it as "Created
+      via the Portal" rather than blank. Making the column itself required
+      would need either (1) a real `portal` value added to the
+      `IntakeChannel` enum so self-filed tickets have something valid to
+      store (new migration, `schemas.py`'s validator and the detail page's
+      Call/Email/In Person `<select>` all updated to include it) and set
+      server-side at creation time for requester-filed tickets, or (2)
+      keeping it nullable at the DB/schema level but only *enforcing*
+      "must be set" for technician-created tickets (via `PATCH` or the
+      new-ticket form once staff can set it there - see the "Reported By"
+      item above) while requester self-service tickets stay exempt.
+      Whichever direction, existing rows with `intake_channel = null`
+      already in the database need a backfill plan before any NOT NULL
+      constraint could actually be added - can't add that constraint while
+      current data violates it.
+- [ ] Technicians and admins get no ticket email notifications at all today
+      - checked `backend/notifications.py` and every call site in
+      `main.py`: all five builders (`ticket_created`,
+      `ticket_created_for_affected`, `ticket_assigned`, `status_changed`,
+      `technician_note`) only ever address the requester and, if set, the
+      affected employee. A technician's only way to learn a new ticket
+      exists is checking the portal/dashboard themselves - no "new ticket
+      in the queue" alert, no digest, nothing. Worth scoping alongside
+      Davis's separate feedback (too many requester-facing emails per
+      ticket - 5 for one open/update/close cycle, see the
+      Assigned-vs-In-Progress redundancy already flagged in chat) rather
+      than in isolation, since both are really the same underlying
+      question: who should hear about which ticket event, and ideally
+      configurable the same way onboarding notifications already are
+      (`OnboardingNotificationRecipient`/Settings -> Onboarding
+      Notifications pattern) instead of hardcoded recipients either way.
+- [ ] The new requester auto-sync (`backend/entra_sync.py`, see Done
+      section) is additive-only by design - someone removed from the
+      Entra sync group is NOT deactivated or removed from `users`, so a
+      terminated employee's account (and role) just sits there
+      indefinitely, same gap as before the sync existed. Needs the
+      `disabled`/`is_active` flag design already flagged on the Affected
+      Employee picker item above - tickets hold foreign keys to
+      `requester_id`/`affected_user_id`/`tech_id` that can't just be
+      deleted out from under history, so this wants a soft flag (login
+      and directory search exclude inactive users; existing tickets still
+      resolve the name for display), not a hard delete.
+
 ## Done
 
 - [x] Implement the Employee IT Onboarding Workflow - shipped 2026-09-15.
@@ -369,3 +421,19 @@ ships, so there's a record of when/why.
       Archived" toggle with its own bulk Unarchive. Immediately followed
       by archiving everything currently on UAT so the grid starts clean
       for go-live, per the original ask.
+- [x] Auto-sync DHC domain users with the ticketing `users` table -
+      shipped 2026-11-11, two complementary pieces (see
+      `backend/entra_sync.py`): (1) Employee Onboarding's
+      `complete_onboarding_stage1` now creates the new hire's `User` row
+      immediately (role=requester, `entra_object_id` null until their
+      first real login links it, same as a CSV-seeded account) instead of
+      waiting on login or a sync to notice them; (2) a scheduled job
+      (APScheduler in-process, every 24h, plus an on-demand admin-only
+      `POST /users/sync-from-entra`) pages through a **Dynamic** Entra
+      security group's membership (`ENTRA_SYNC_GROUP_ID`) via app-only
+      Graph and upserts anyone missing - reuses the existing Mail Sender
+      app registration's credentials (`ENTRA_MAIL_CLIENT_ID/SECRET`), just
+      needs `GroupMember.Read.All` (Application, admin-consented) added to
+      it. Dynamic membership means no one has to maintain the group by
+      hand as people are hired. Still open: this is additive-only, doesn't
+      handle someone leaving - see the new Open item above.

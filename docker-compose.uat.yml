@@ -39,6 +39,8 @@ services:
       # --- Email notifications (see backend/mailer.py) ---
       ENTRA_MAIL_CLIENT_ID: ${ENTRA_MAIL_CLIENT_ID}
       ENTRA_MAIL_CLIENT_SECRET: ${ENTRA_MAIL_CLIENT_SECRET}
+      # --- Proactive requester sync (see backend/entra_sync.py) ---
+      ENTRA_SYNC_GROUP_ID: ${ENTRA_SYNC_GROUP_ID}
       M365_FROM_NAME: ${M365_FROM_NAME}
       M365_FROM_ADDRESS: ${M365_FROM_ADDRESS}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}

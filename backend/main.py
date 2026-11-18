@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import timedelta, datetime
 from PIL import Image, UnidentifiedImageError
-import models, schemas, auth, entra_auth, notifications, triage
+import models, schemas, auth, entra_auth, entra_sync, notifications, triage
 from mailer import send_mail
-from database import get_db
+from database import get_db, SessionLocal
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # Schema is provisioned by Alembic now (see alembic/ - `alembic upgrade
 # head`), not by the app itself at import time. This used to be
@@ -65,6 +66,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def _run_entra_sync_job():
+    # A scheduled job runs outside any request, so there's no Depends(get_db)
+    # to lean on - opens/closes its own session, same as get_db does per-request.
+    db = SessionLocal()
+    try:
+        result = entra_sync.sync_requesters_from_entra(db)
+        print(f"[entra_sync] scheduled run: {result}")
+    except Exception as e:
+        print(f"[entra_sync] scheduled run failed: {e}")
+    finally:
+        db.close()
+
+_scheduler = BackgroundScheduler()
+
+@app.on_event("startup")
+def _start_scheduler():
+    if not entra_sync.SYNC_CONFIGURED:
+        print("[entra_sync] ENTRA_SYNC_GROUP_ID/Graph app-only credentials not fully set - scheduled sync disabled")
+        return
+    # First run shortly after startup (not instantly - lets the app finish
+    # booting) rather than waiting a full day on a fresh deploy, then every
+    # 24h after that.
+    _scheduler.add_job(
+        _run_entra_sync_job, "interval", hours=24,
+        next_run_time=datetime.utcnow() + timedelta(seconds=30),
+        id="entra_sync", replace_existing=True,
+    )
+    _scheduler.start()
+
+@app.on_event("shutdown")
+def _stop_scheduler():
+    if _scheduler.running:
+        _scheduler.shutdown(wait=False)
 
 from fastapi.security import OAuth2PasswordBearer
 from typing import Annotated
@@ -370,6 +405,21 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail="Cannot delete user. They may be associated with existing tickets.")
+
+@app.post("/users/sync-from-entra")
+def sync_users_from_entra(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """On-demand run of the same Entra group sync the scheduled job (see
+    main.py's startup event, entra_sync.py) runs automatically every 24h -
+    lets an admin verify it works, or force a refresh, without waiting for
+    the next scheduled fire."""
+    if current_user.role != models.RoleEnum.admin:
+        raise HTTPException(status_code=403, detail="Not authorized to run the Entra sync")
+    if not entra_sync.SYNC_CONFIGURED:
+        raise HTTPException(status_code=400, detail="Entra sync isn't configured - ENTRA_SYNC_GROUP_ID and/or the Graph app-only credentials are missing")
+    try:
+        return entra_sync.sync_requesters_from_entra(db)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Graph request failed: {e.response.status_code} {e.response.text}")
     return None
 
 
@@ -1133,6 +1183,28 @@ def complete_onboarding_stage1(candidate_id: int, background_tasks: BackgroundTa
     assigned_email = _generate_assigned_email(candidate.first_name, candidate.last_name, db)
     temp_password = _generate_temp_password()
     candidate.assigned_email = assigned_email
+
+    # Give this new hire a requester account now, rather than waiting on
+    # their first login or the next scheduled Entra sync (see
+    # entra_sync.py) to notice them - they can be filed tickets for/by
+    # from day one. entra_object_id stays null here since the real Entra
+    # account doesn't necessarily exist the moment this fires (a
+    # technician provisions it manually, per this endpoint's docstring) -
+    # it links up automatically the same way a CSV-seeded account does,
+    # via login_with_entra's case-insensitive email match on first real
+    # login. _generate_assigned_email above already dedupes against
+    # models.User.email, so this can't collide with an existing row.
+    existing_user = db.query(models.User).filter(func.lower(models.User.email) == assigned_email.lower()).first()
+    if not existing_user:
+        db.add(models.User(
+            username=assigned_email,
+            email=assigned_email,
+            first_name=candidate.first_name,
+            last_name=candidate.last_name,
+            clinic_site_id=candidate.clinic_site_id,
+            role=models.RoleEnum.requester,
+            hashed_password=None,
+        ))
 
     for t in candidate.tasks:
         if t is not identity_task and t.assigned_role != models.OnboardingAssignedRole.clinical_trainer and t.assigned_role != models.OnboardingAssignedRole.dental_trainer:
